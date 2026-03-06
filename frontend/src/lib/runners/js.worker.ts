@@ -98,7 +98,11 @@ const executeCode = async (code: string, deck?: PackageDef[]) => {
                         ? ` ${JSON.stringify(ev.metadata)}`
                         : "";
                     const msg = `[Warehouse] ${ev.type} pkg=${pid} line=${line} lane=${lane}${meta}`;
-                    postEvent({ type: "STDOUT", payload: msg });
+                    if (ev.type === "ERROR") {
+                        postEvent({ type: "STDERR", payload: msg });
+                    } else {
+                        postEvent({ type: "STDOUT", payload: msg });
+                    }
                 }
             } catch {
                 // Ignore formatting problems and avoid crashing the worker
