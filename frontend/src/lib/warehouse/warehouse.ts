@@ -22,8 +22,8 @@ import type {
 /** Timings and capacities (tunable) */
 const UNLOAD_MS = 600;
 const PUSH_MS = 100;
-const PRINT_BASE_MS = 800;
-const PRINT_TRAVEL_MS = 3000;
+const PRINT_BASE_MS = 500;
+const PRINT_TRAVEL_MS = 2000;
 const SHIP_REMOVE_INTERVAL_MS = 2000;
 const SHIP_ENQUEUE_MS = 200;
 const PROCESSING_TIME_MIN = 500;

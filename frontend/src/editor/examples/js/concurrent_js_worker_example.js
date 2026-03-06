@@ -1,26 +1,24 @@
 /**
  * Concurrent JS example for the Concurrency Arena.
  *
- * This example demonstrates the use of Locks (Mutexes) to coordinate access
- * to shared physical resources and internal data structures.
- *
- * Architectural Patterns:
- *  1. Parallel Intake: Runs multiple concurrent unloaders.
- *  2. Worker Pool: Multiple workers processing packages in parallel.
- *  3. Critical Sections: Uses a lock for the internal queue to prevent race conditions.
- *  4. Resource Locking: Prevents "Printer Busy" and "Station Busy" errors.
+ * This example demonstrates robust resource coordination and backpressure:
+ *  1. Parallel Intake: Uses 4 unloaders to maximize intake concurrency.
+ *  2. Intake Backpressure: Checks total packages currently in the system to avoid exceeding the 8-package limit.
+ *  3. Worker Pool: Multiple workers draining an internal queue and managing physical locks.
+ *  4. Critical Sections: Uses Mutexes for Deck, Internal Queue, Stations, and Printer.
  */
 
 const TOTAL_PACKAGES = 100;
 const CONCURRENCY = 6;
 const INTAKE_CONCURRENCY = 4;
+const MAX_PHYSICAL_INTAKE = 8; // Physical limit of the warehouse intake belt
 
 const queue = [];
 let itemsUnloaded = 0;
 let itemsFinished = 0;
 
 /**
- * Simple Mutex implementation for the JS environment.
+ * Mutex implementation to synchronize async operations.
  */
 class Mutex {
     constructor() {
@@ -42,44 +40,62 @@ class Mutex {
     }
 }
 
-// Internal State Lock
-const queueLock = new Mutex();
-
-// Physical Resource Locks
-const printerLock = new Mutex();
-const stationLocks = [new Mutex(), new Mutex(), new Mutex()];
+// Critical section locks
+const deckLock = new Mutex(); // Protects warehouse.unload()
+const queueLock = new Mutex(); // Protects the JS 'queue' array and counters
+const printerLock = new Mutex(); // Protects warehouse.print()
+const stationLocks = [new Mutex(), new Mutex(), new Mutex()]; // Protects stations
 
 const delay = (ms) => new Promise((res) => setTimeout(res, ms));
 
 /**
- * Intake Loop using parallel unloaders.
- * The lock MUST be held during the warehouse.unload() call to ensure
- * no two unloaders receive the same package reference from the deck.
+ * Intake Loop: Pulls packages from the deck and pushes them into the worker queue.
+ * Implements backpressure to ensure we don't exceed the warehouse's physical intake capacity.
  */
 async function intakeLoop() {
-    const unloader = async () => {
+    const unloader = async (id) => {
         while (true) {
+            // 1. Check if we are done with the deck
+            await queueLock.lock();
+            if (itemsUnloaded >= TOTAL_PACKAGES) {
+                queueLock.unlock();
+                break;
+            }
+
+            // 2. BACKPRESSURE: Check how many packages are currently "in flight" (unloaded but not yet finished)
+            // If there are too many packages on the belts, we wait before pulling more from the deck.
+            const inFlight = itemsUnloaded - itemsFinished;
+            if (inFlight >= MAX_PHYSICAL_INTAKE) {
+                queueLock.unlock();
+                await delay(200);
+                continue;
+            }
+            queueLock.unlock();
+
             let pkg = null;
 
-            // Critical Section: Acquire the next package from the warehouse deck
-            await queueLock.lock();
+            // 3. Acquire from physical deck
+            await deckLock.lock();
             try {
-                if (itemsUnloaded >= TOTAL_PACKAGES) {
-                    break;
-                }
+                // Re-check count under deck lock to avoid races
+                await queueLock.lock();
+                const stillNeedWork = itemsUnloaded < TOTAL_PACKAGES;
+                queueLock.unlock();
 
-                // We call unload() while holding the lock to prevent other
-                // unloaders from overlapping and getting the same ID.
-                pkg = await warehouse.unload();
-                if (pkg) {
-                    itemsUnloaded++;
-                    queue.push(pkg);
+                if (stillNeedWork) {
+                    pkg = await warehouse.unload();
+                    if (pkg) {
+                        await queueLock.lock();
+                        itemsUnloaded++;
+                        queue.push(pkg);
+                        queueLock.unlock();
+                    }
                 }
             } catch (err) {
-                // If intake is full, we release and wait
-                await delay(100);
+                // Intake might be physically full despite our checks (race condition)
+                await delay(250);
             } finally {
-                queueLock.unlock();
+                deckLock.unlock();
             }
 
             if (!pkg && itemsUnloaded >= TOTAL_PACKAGES) break;
@@ -87,21 +103,24 @@ async function intakeLoop() {
         }
     };
 
-    const unloaders = Array.from({ length: INTAKE_CONCURRENCY }, unloader);
+    const unloaders = Array.from({ length: INTAKE_CONCURRENCY }, (_, i) =>
+        unloader(i),
+    );
     await Promise.all(unloaders);
 }
 
 /**
- * Worker logic with resource coordination.
+ * Worker: Drains the internal queue and processes packages through the factory.
  */
 async function worker(workerId) {
     while (true) {
         let pkg = null;
 
-        // Critical Section: Get work from the internal queue
+        // 1. Get next available package from internal queue
         await queueLock.lock();
         try {
             if (itemsFinished >= TOTAL_PACKAGES) {
+                queueLock.unlock();
                 break;
             }
             pkg = queue.shift();
@@ -115,10 +134,9 @@ async function worker(workerId) {
         }
 
         try {
-            // 1. Choose a processing line
             const lineId = pkg.id % 3;
 
-            // 2. Induction & Processing (Station Lock)
+            // 2. Processing Critical Section
             await stationLocks[lineId].lock();
             try {
                 await warehouse.pushToProcessingLine(pkg.id, lineId);
@@ -127,7 +145,7 @@ async function worker(workerId) {
                 stationLocks[lineId].unlock();
             }
 
-            // 3. Printing (Global Printer Lock)
+            // 3. Printing Critical Section
             await printerLock.lock();
             let shippingLine;
             try {
@@ -136,18 +154,18 @@ async function worker(workerId) {
                 printerLock.unlock();
             }
 
-            // 4. Shipping (Backpressure loop)
+            // 4. Shipping (with backpressure retry)
             let shipped = false;
             while (!shipped) {
                 try {
                     await warehouse.ship(pkg.id, shippingLine);
                     shipped = true;
                 } catch (err) {
-                    await delay(500);
+                    await delay(500); // Lane full, wait for truck removal
                 }
             }
 
-            // Mark as finished under lock
+            // 5. Finalize - decrementing in-flight count implicitly
             await queueLock.lock();
             itemsFinished++;
             queueLock.unlock();
@@ -162,17 +180,17 @@ async function worker(workerId) {
 
 async function runConcurrent() {
     console.log(
-        `Starting concurrent run with ${CONCURRENCY} workers and ${INTAKE_CONCURRENCY} parallel unloaders...`,
+        `Starting run with ${CONCURRENCY} workers and 4 parallel unloaders...`,
     );
 
-    // Start background intake and worker pool
+    // Start all actors
     const intakePromise = intakeLoop();
     const workerPromises = Array.from({ length: CONCURRENCY }, (_, i) =>
         worker(i),
     );
 
     await Promise.all([intakePromise, ...workerPromises]);
-    console.log("--- All packages processed concurrently! ---");
+    console.log("--- Mission Accomplished: 100% Shipped ---");
 }
 
 await runConcurrent();
