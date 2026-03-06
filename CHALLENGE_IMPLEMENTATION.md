@@ -101,9 +101,3 @@ Since the code runs in a Worker, we cannot rely on the browser to detect a hang.
 * **Heartbeat Monitor:** The Executor sends a heartbeat every 500ms.
 * **Stall Detection:** If the "Printer Queue" is non-empty AND the "Processed Count" has not increased for 3 seconds while locks are held, the Relay emits a `STALL` event.
 * **UI Representation:** In React, find the two workers involved in the circular wait and draw a **pulsing red SVG line** between them.
-
----
-
-## Next Step for Implementation
-
-Would you like me to write the **TypeScript interface for the `WarehouseAPI` class** that includes the internal Mutex logic? This will be the actual code you drop into the Worker to act as the "Engine."

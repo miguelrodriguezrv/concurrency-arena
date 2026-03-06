@@ -70,9 +70,3 @@ $$Score = \left( \frac{\text{Total Packages}}{\text{Total Time}} \right) \times 
 * **Junior Strategy:** Use basic `async/await` or Goroutines but watch out for the 4-bay limit at the Intake.
 * **Medior Strategy:** Implement a **Semaphore** for the Intake and a **Mutex** for the Printer.
 * **Senior Strategy:** De-couple the stages. Use **Worker Pools** for unloading and a **Coordinator** to batch Printer movements. Use **Async Handoffs** (Queues/Channels) to move packages into Shipping Lanes so your main workers can get back to the Intake immediately.
-
----
-
-### Suggested Next Step
-
-Now that the rules are set, would you like me to provide the **Event Map JSON**? This will list every event (e.g., `BOX_UNLOADED`, `PRINTER_MOVED`, `LANE_LOCKED`) that the API will emit so you can start building the Framer Motion animations in React.
