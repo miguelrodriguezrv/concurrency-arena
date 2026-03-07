@@ -3,9 +3,8 @@ import type {
     RunnerCommand,
     RunnerEvent,
     MetricUpdatePayload,
-} from "@/lib/runners/bridge";
-// Notice the `?worker` suffix. This tells Vite to bundle this file as a Web Worker
-import JSWorker from "@/lib/runners/js.worker.ts?worker";
+} from "@/services/runners/bridge";
+import { JSWorker } from "@/services/runners";
 
 export type SupportedLanguage = "javascript" | "go" | "python";
 
@@ -83,7 +82,10 @@ export const useCodeRunner = () => {
                     // Go WASM (Yaegi) bridge.
                     // Uses 'module' type to allow modern TS worker features.
                     worker = new Worker(
-                        new URL("../lib/runners/go.worker.ts", import.meta.url),
+                        new URL(
+                            "../services/runners/go.worker.ts",
+                            import.meta.url,
+                        ),
                         { type: "module" },
                     );
                     break;
@@ -92,7 +94,7 @@ export const useCodeRunner = () => {
                     // Uses 'module' type for Vite compatibility.
                     worker = new Worker(
                         new URL(
-                            "../lib/runners/python.worker.ts",
+                            "../services/runners/python.worker.ts",
                             import.meta.url,
                         ),
                         { type: "module" },

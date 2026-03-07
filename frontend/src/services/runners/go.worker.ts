@@ -165,13 +165,13 @@ self.addEventListener("message", async (e: MessageEvent<RunnerCommand>) => {
                 // Use dynamic import so bundlers/workers that can't resolve the module won't crash here.
                 // The path mirrors the project's source layout; if your bundler supports path aliases
                 // (like @/lib/warehouse/warehouse), replace the string below accordingly.
+                // Try importing the project's Warehouse module via the source alias.
+                // Use the @ alias which the bundler/Vite resolves; falling back to a single
+                // dynamic import keeps the code simpler and avoids absolute /src/... paths.
                 const mod =
-                    (await import("/src/lib/warehouse/warehouse.js").catch(
+                    (await import("@/lib/warehouse/warehouse").catch(
                         () => null,
-                    )) ||
-                    (await import("/src/lib/warehouse/warehouse").catch(
-                        () => null,
-                    ));
+                    )) || null;
                 if (mod && typeof mod.createWarehouse === "function") {
                     const createWarehouse = mod.createWarehouse;
                     const runDeck = Array.isArray(deck) ? deck : undefined;

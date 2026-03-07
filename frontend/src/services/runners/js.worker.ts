@@ -1,6 +1,6 @@
 import type { RunnerEvent, RunnerCommand, StartRunPayload } from "./bridge";
-import { createWarehouse } from "../warehouse/warehouse";
-import type { PackageDef } from "../warehouse/types";
+import { createWarehouse } from "@/lib/warehouse/warehouse";
+import type { PackagePublic } from "@/lib/warehouse/types";
 
 // This file is compiled as an isolated Web Worker by Vite.
 
@@ -38,7 +38,7 @@ const setupConsoleProxy = () => {
     };
 };
 
-const executeCode = async (code: string, deck?: PackageDef[]) => {
+const executeCode = async (code: string, deck?: PackagePublic[]) => {
     try {
         // Internal metric state, completely hidden from the student.
         let throughput = 0;
@@ -90,14 +90,10 @@ const executeCode = async (code: string, deck?: PackageDef[]) => {
                 if (ev && ev.type !== "HEARTBEAT") {
                     const pid =
                         ev.packageId !== undefined ? String(ev.packageId) : "-";
-                    const line =
-                        ev.lineId !== undefined ? String(ev.lineId) : "-";
-                    const lane =
-                        ev.laneId !== undefined ? String(ev.laneId) : "-";
                     const meta = ev.metadata
                         ? ` ${JSON.stringify(ev.metadata)}`
                         : "";
-                    const msg = `[Warehouse] ${ev.type} pkg=${pid} line=${line} lane=${lane}${meta}`;
+                    const msg = `[Warehouse] ${ev.type} pkg=${pid} ${meta}`;
                     if (ev.type === "ERROR") {
                         postEvent({ type: "STDERR", payload: msg });
                     } else {
@@ -153,7 +149,7 @@ self.onmessage = async (e: MessageEvent<RunnerCommand>) => {
         case "START_RUN": {
             const { code, deck } = payload as StartRunPayload;
             setupConsoleProxy();
-            await executeCode(code, deck as PackageDef[] | undefined);
+            await executeCode(code, deck as PackagePublic[] | undefined);
             break;
         }
         case "STOP_RUN":

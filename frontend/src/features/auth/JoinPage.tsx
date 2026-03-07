@@ -5,6 +5,33 @@ import { User, KeyRound, ArrowRight, Shield } from "lucide-react";
 import logo from "@/assets/concurrency-arena.png";
 import { clearSession, getSession } from "@/lib/storage";
 
+/**
+ * Prefetch helper: warms the Monaco initialization in the background without
+ * blocking JoinPage load. Uses requestIdleCallback when available and falls
+ * back to a delayed setTimeout. initMonaco is idempotent so repeated calls
+ * are safe.
+ */
+function prefetchMonacoOnIdle() {
+    if (typeof window === "undefined") return;
+    const schedule = (cb: () => void) => {
+        if ("requestIdleCallback" in window) {
+            return window.requestIdleCallback(cb, { timeout: 2000 });
+        }
+        return globalThis.setTimeout(cb, 1500);
+    };
+
+    schedule(async () => {
+        try {
+            const m = await import("@/services/monaco/initMonaco");
+            await m.initMonaco();
+            // Debug success so we can verify prefetch worked in logs.
+            console.debug("Monaco prefetch completed");
+        } catch (err) {
+            console.debug("Monaco prefetch failed:", err);
+        }
+    });
+}
+
 export default function JoinPage() {
     const navigate = useNavigate();
     const setSession = useStore((state) => state.setSession);
@@ -24,6 +51,14 @@ export default function JoinPage() {
                 console.error("Failed to parse saved session:", e);
                 clearSession();
             }
+        }
+
+        // Warm Monaco in the background on JoinPage; this is safe and idempotent
+        // and will not interfere with initial interactive load.
+        try {
+            prefetchMonacoOnIdle();
+        } catch {
+            // Swallow to avoid impacting JoinPage
         }
     }, [navigate, setSession]);
 

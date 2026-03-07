@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { z } from "zod";
+import type { MetricPayload } from "@/contracts/messages";
 import {
     getSession as getStoredSession,
     setSession as persistSession,
@@ -11,16 +11,7 @@ import {
 
 export type Role = "Instructor" | "Student";
 
-// Zod Schemas for Runtime Validation
-export const MetricPayloadSchema = z
-    .object({
-        throughput: z.number().optional(),
-        correctness: z.number().optional(),
-        collisions: z.number().optional(),
-    })
-    .catchall(z.unknown());
-
-export type StudentMetrics = z.infer<typeof MetricPayloadSchema>;
+export type StudentMetrics = MetricPayload;
 
 export interface Session {
     token: string;

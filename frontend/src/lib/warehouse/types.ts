@@ -138,4 +138,11 @@ export interface WarehouseAPI {
      * The callback may be called frequently; keep handlers fast.
      */
     onEvent(cb: (ev: WarehouseEvent) => void): void;
+
+    /**
+     * Optional cleanup hook.
+     * Implementations that allocate background timers or other resources may
+     * provide this method so consumers can request a graceful shutdown.
+     */
+    dispose?: () => void;
 }
