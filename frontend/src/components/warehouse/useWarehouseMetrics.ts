@@ -1,9 +1,12 @@
-import { useMemo, useState, useEffect } from "react";
-import type { WarehouseEventPayload } from "@/components/warehouse/types";
-import { Clock, Zap, Printer, AlertCircle, TrendingUp } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import type { WarehouseEventPayload } from "./types";
 
-interface WarehouseMetricsProps {
-    events: WarehouseEventPayload[];
+export interface WarehouseMetrics {
+    shippedCount: number;
+    errorCount: number;
+    intakeEfficiency: number;
+    printerEfficiency: number;
+    printerMoveMs: number;
 }
 
 /**
@@ -16,13 +19,39 @@ function findLastIndex<T>(arr: T[], predicate: (item: T) => boolean): number {
     return -1;
 }
 
-export default function WarehouseMetrics({ events }: WarehouseMetricsProps) {
-    // Current display time in ms (Wall-clock)
-    const [elapsedMs, setElapsedMs] = useState(0);
+export type UseWarehouseMetricsResult = {
+    elapsedMs: number;
+    startTs: number;
+    stopTs: number;
+    isComplete: boolean;
+    currentRunEvents: WarehouseEventPayload[];
+    metrics: WarehouseMetrics;
+    throughputUnitsPerMin: number;
+    formatTime: (ms: number) => string;
+};
+
+/**
+ * useWarehouseMetrics
+ *
+ * Extracted from the previous `WarehouseMetrics` component so multiple UI
+ * surfaces can re-use the same, single source-of-truth for derived metrics.
+ *
+ * Behavior:
+ * - Finds the most recent START_RUN event and treats subsequent events as the
+ *   active run.
+ * - Maintains an independent wall-clock `elapsedMs` timer that updates every
+ *   100ms while the run is active (stops when run is complete).
+ * - Computes the same architectural metrics as before: shippedCount, errorCount,
+ *   intakeEfficiency (time-weighted average active unloaders), printerEfficiency,
+ *   and printerMoveMs travel penalty.
+ */
+export default function useWarehouseMetrics(
+    events: WarehouseEventPayload[] = [],
+): UseWarehouseMetricsResult {
+    const [elapsedMs, setElapsedMs] = useState<number>(0);
 
     // 1. Identify the current run lifecycle boundaries using START_RUN and STOP_RUN
     const { startTs, stopTs, isComplete, currentRunEvents } = useMemo(() => {
-        // Find the most recent START_RUN event
         const startIdx = findLastIndex(events, (e) => e.type === "START_RUN");
 
         if (startIdx === -1) {
@@ -30,14 +59,13 @@ export default function WarehouseMetrics({ events }: WarehouseMetricsProps) {
                 startTs: 0,
                 stopTs: 0,
                 isComplete: false,
-                currentRunEvents: [],
+                currentRunEvents: [] as WarehouseEventPayload[],
             };
         }
 
         const relevant = events.slice(startIdx + 1);
         const startEvent = events[startIdx];
 
-        // Check for manual stop or natural completion (pkg 99 shipped)
         const stopEvent = relevant.find((e) => e.type === "STOP_RUN");
         const completeEvent = relevant.find(
             (e) => e.type === "SHIP_COMPLETE" && e.packageId === 99,
@@ -53,29 +81,60 @@ export default function WarehouseMetrics({ events }: WarehouseMetricsProps) {
 
     // 2. Independent Wall-Clock Timer (Refreshing every 100ms)
     useEffect(() => {
+        // Use timeouts for immediate updates to avoid synchronous setState calls
+        // inside the effect body which some linters/runtime checks flag as
+        // cascading renders. We still use the interval for steady updates.
+        let immediateTimer: ReturnType<typeof setTimeout> | null = null;
+        let intervalId: ReturnType<typeof setInterval> | null = null;
+
         if (startTs === 0) {
-            setElapsedMs(0);
-            return;
+            // schedule async update to set elapsed to zero
+            immediateTimer = setTimeout(() => {
+                setElapsedMs((prev) => (prev === 0 ? prev : 0));
+            }, 0);
+            return () => {
+                if (immediateTimer) clearTimeout(immediateTimer);
+            };
         }
 
         if (isComplete) {
-            setElapsedMs(Math.max(0, stopTs - startTs));
-            return;
+            const final = Math.max(0, stopTs - startTs);
+            // schedule async update for final elapsed time
+            immediateTimer = setTimeout(() => {
+                setElapsedMs((prev) => (prev === final ? prev : final));
+            }, 0);
+            return () => {
+                if (immediateTimer) clearTimeout(immediateTimer);
+            };
         }
 
-        const interval = setInterval(() => {
+        // Establish an asynchronous baseline value (avoid waiting for first tick)
+        const nowInitial =
+            typeof performance !== "undefined" ? performance.now() : Date.now();
+        const initial = Math.max(0, nowInitial - startTs);
+        immediateTimer = setTimeout(() => {
+            setElapsedMs((prev) => (prev === initial ? prev : initial));
+        }, 0);
+
+        // Live-updating timer (every 100ms) but only write when the computed
+        // value actually changes to avoid unnecessary renders.
+        intervalId = setInterval(() => {
             const now =
                 typeof performance !== "undefined"
                     ? performance.now()
                     : Date.now();
-            setElapsedMs(Math.max(0, now - startTs));
+            const computed = Math.max(0, now - startTs);
+            setElapsedMs((prev) => (prev === computed ? prev : computed));
         }, 100);
 
-        return () => clearInterval(interval);
+        return () => {
+            if (intervalId) clearInterval(intervalId);
+            if (immediateTimer) clearTimeout(immediateTimer);
+        };
     }, [startTs, isComplete, stopTs]);
 
     // 3. Architectural Metrics (calculated from events since START_RUN)
-    const metrics = useMemo(() => {
+    const metrics = useMemo<WarehouseMetrics>(() => {
         let shippedCount = 0;
         let errorCount = 0;
         let printerMoveMs = 0;
@@ -156,107 +215,14 @@ export default function WarehouseMetrics({ events }: WarehouseMetricsProps) {
         return `${seconds.toFixed(1)}s`;
     };
 
-    return (
-        <div className="flex flex-col gap-3 w-full shrink-0 font-sans mt-2 mb-2">
-            <div className="grid grid-cols-2 gap-2">
-                <MetricCard
-                    label="Wall-Clock Time"
-                    value={formatTime(elapsedMs)}
-                    subValue={`${metrics.shippedCount} / 100 units`}
-                    icon={<Clock size={14} className="text-emerald-400" />}
-                />
-
-                <MetricCard
-                    label="Throughput"
-                    value={throughputUnitsPerMin.toFixed(1)}
-                    subValue="Units per Minute"
-                    icon={<TrendingUp size={14} className="text-indigo-400" />}
-                    valueColor="text-indigo-400"
-                />
-
-                <MetricCard
-                    label="Intake Concurrency"
-                    value={
-                        metrics.intakeEfficiency > 0
-                            ? metrics.intakeEfficiency.toFixed(2)
-                            : "-"
-                    }
-                    subValue="Avg Active Workers (Max 4)"
-                    icon={
-                        <Zap
-                            size={14}
-                            className={
-                                metrics.intakeEfficiency > 3
-                                    ? "text-emerald-400"
-                                    : "text-amber-400"
-                            }
-                        />
-                    }
-                />
-
-                <MetricCard
-                    label="Printer Efficiency"
-                    value={`${metrics.printerEfficiency.toFixed(1)}%`}
-                    subValue={`${(metrics.printerMoveMs / 1000).toFixed(1)}s travel penalty`}
-                    icon={<Printer size={14} className="text-cyan-400" />}
-                />
-
-                <MetricCard
-                    label="Violations"
-                    value={metrics.errorCount.toString()}
-                    subValue="Race conditions / Errors"
-                    icon={
-                        <AlertCircle
-                            size={14}
-                            className={
-                                metrics.errorCount > 0
-                                    ? "text-rose-500"
-                                    : "text-zinc-500"
-                            }
-                        />
-                    }
-                    valueColor={
-                        metrics.errorCount > 0
-                            ? "text-rose-500"
-                            : "text-zinc-300"
-                    }
-                />
-            </div>
-        </div>
-    );
-}
-
-function MetricCard({
-    label,
-    value,
-    subValue,
-    icon,
-    valueColor = "text-zinc-100",
-}: {
-    label: string;
-    value: string;
-    subValue: string;
-    icon: React.ReactNode;
-    valueColor?: string;
-}) {
-    return (
-        <div className="bg-zinc-900 p-3 rounded-md border border-zinc-800 flex flex-col justify-between h-24">
-            <div className="flex items-center gap-2 opacity-80">
-                {icon}
-                <span className="text-[10px] text-zinc-500 uppercase tracking-widest font-bold">
-                    {label}
-                </span>
-            </div>
-            <div className="flex flex-col mt-1">
-                <span
-                    className={`text-xl font-mono leading-none ${valueColor}`}
-                >
-                    {value}
-                </span>
-                <span className="text-[9px] text-zinc-600 mt-1 font-medium leading-tight">
-                    {subValue}
-                </span>
-            </div>
-        </div>
-    );
+    return {
+        elapsedMs,
+        startTs,
+        stopTs,
+        isComplete,
+        currentRunEvents,
+        metrics,
+        throughputUnitsPerMin,
+        formatTime,
+    };
 }

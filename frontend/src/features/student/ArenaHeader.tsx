@@ -64,7 +64,7 @@ export default function ArenaHeader({
                     </span>
                 </div>
 
-                <div title={`Connection: ${status}`}>
+                <div title={`${status}`}>
                     {status === "connected" ? (
                         <Wifi size={16} className="text-emerald-500" />
                     ) : (

@@ -5,7 +5,7 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 import { useCodeRunner, type SupportedLanguage } from "@/hooks/useCodeRunner";
 import CodeEditor from "@/components/editor/CodeEditor";
 import ArenaHeader from "./ArenaHeader";
-import ArenaSidebar from "./ArenaSidebar";
+import ConsoleOutput from "./ConsoleOutput";
 import IncomingDiffModal from "@/components/editor/IncomingDiffModal";
 import {
     DEFAULT_JS_CODE,
@@ -328,13 +328,23 @@ export default function ArenaPage() {
                 onClose={handleCloseIncoming}
             />
 
-            {/* Visualization container: full-width above editor/sidebar */}
-            <div className="w-full border-b border-zinc-800 p-4">
-                <ArenaVisualizer
-                    events={
-                        runnerState.warehouseEvents as unknown as import("@/components/warehouse/types").WarehouseEventPayload[]
-                    }
-                />
+            {/* Constrain height so incoming logs don't expand the layout; make sidebar scroll internally */}
+            <div className="w-full border-b border-zinc-800 p-4 h-115 overflow-hidden">
+                <div className="flex w-full gap-4 h-full">
+                    <div className="w-[61%] h-full">
+                        <ArenaVisualizer
+                            events={
+                                runnerState.warehouseEvents as unknown as import("@/components/warehouse/types").WarehouseEventPayload[]
+                            }
+                        />
+                    </div>
+                    <div className="w-[39%] h-full overflow-hidden">
+                        {/* Ensure the sidebar fills this column and scrolls internally */}
+                        <div className="h-full overflow-hidden">
+                            <ConsoleOutput runnerState={runnerState} />
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <main className="flex-1 flex overflow-hidden">
@@ -353,8 +363,6 @@ export default function ArenaPage() {
                         theme={theme}
                     />
                 </div>
-
-                <ArenaSidebar runnerState={runnerState} />
             </main>
         </div>
     );
