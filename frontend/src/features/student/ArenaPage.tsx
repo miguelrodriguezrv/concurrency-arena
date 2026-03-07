@@ -26,6 +26,7 @@ export default function ArenaPage() {
     const clearSession = useStore((state) => state.clearSession);
     const theme = useStore((state) => state.theme);
 
+    // Restore subscribeToAdminCommands so admin PUSH_TEMPLATE commands are handled
     const { status, sendMessage, subscribeToAdminCommands } = useWebSocket();
     const { runnerState, executeCode, stopRun } = useCodeRunner();
 
@@ -72,14 +73,11 @@ export default function ArenaPage() {
     const handleAcceptIncoming = () => {
         const incoming = incomingCode || "";
         setCode(incoming);
-        // keep ref in sync with programmatic updates so effects read the latest value
         codeRef.current = incoming;
         setCodeForLanguage(language, incoming);
-        // Optionally notify server we accepted/updated (keeps server state in sync).
         try {
             sendMessage("CODE_SYNC", { code: incoming, language });
         } catch (err) {
-            // ignore send failures here
             console.error(
                 "Failed to send CODE_SYNC after accepting incoming:",
                 err,
@@ -101,7 +99,6 @@ export default function ArenaPage() {
             // keep ref in sync so other effects can read latest editor value without
             // depending on `code` (this avoids re-running those effects on every keystroke)
             codeRef.current = newCode;
-            // persist to language-specific key
             setCodeForLanguage(language, newCode);
 
             // Debounce the sync to avoid flooding the WebSocket
@@ -110,19 +107,12 @@ export default function ArenaPage() {
                 syncTimerRef.current = null;
             }
 
-            // Use window.setTimeout to ensure the return type is numeric in the browser
             syncTimerRef.current = window.setTimeout(() => {
-                // clear the ref to indicate there is no longer a pending timer
                 syncTimerRef.current = null;
-
-                // Only attempt to send if socket is connected (defensive)
                 if (status !== "connected") return;
-
                 try {
                     sendMessage("CODE_SYNC", { code: newCode, language });
                 } catch (err) {
-                    // Don't crash the app if sendMessage throws; log for debugging
-                    // You may wish to surface user-visible error later
                     console.error("Failed to send CODE_SYNC:", err);
                 }
             }, 500);
@@ -201,7 +191,7 @@ export default function ArenaPage() {
     }, [students, session?.name, language]);
 
     /**
-     * Handle Admin Commands (e.g. Template Pushes)
+     * Handle Admin Commands
      *
      * Only show the incoming diff modal when the incoming template's declared language
      * matches the student's current editor language. If the incoming ADMIN_COMMAND
@@ -212,13 +202,10 @@ export default function ArenaPage() {
         if (!session) return;
         const unsubscribe = subscribeToAdminCommands?.((payload) => {
             if (payload.action === "PUSH_TEMPLATE" && payload.code) {
-                // The admin command must include a language. If it's missing,
-                // log an error for easier debugging.
                 const incomingLang = (payload as Record<string, unknown>)[
                     "language"
                 ];
                 if (typeof incomingLang !== "string") {
-                    // Language missing or malformed — log and ignore the push.
                     console.error(
                         "[ADMIN_COMMAND] PUSH_TEMPLATE received without a valid 'language' field:",
                         payload,
@@ -226,7 +213,6 @@ export default function ArenaPage() {
                     return;
                 }
 
-                // Only open the diff modal when the incoming language matches the editor language.
                 if (incomingLang !== language) {
                     console.info(
                         `[ADMIN_COMMAND] PUSH_TEMPLATE language mismatch: incoming='${incomingLang}' editor='${language}' — ignoring push.`,
@@ -234,11 +220,12 @@ export default function ArenaPage() {
                     return;
                 }
 
-                // Languages match: show the diff modal so the student can review.
+                // Languages match: open diff modal for student review
                 setIncomingCode(payload.code as string);
                 setDiffOpen(true);
             }
         });
+
         return () => {
             if (typeof unsubscribe === "function") unsubscribe();
         };
@@ -328,40 +315,45 @@ export default function ArenaPage() {
                 onClose={handleCloseIncoming}
             />
 
-            {/* Constrain height so incoming logs don't expand the layout; make sidebar scroll internally */}
-            <div className="w-full border-b border-zinc-800 p-4 h-115 overflow-hidden">
-                <div className="flex w-full gap-4 h-full">
-                    <div className="w-[61%] h-full">
+            {/* Main area: left column with visualizer (top) + console (bottom); right column is the editor (half width, full height) */}
+            <main className="flex-1 flex overflow-hidden p-4 gap-4">
+                {/* Left column: visualizer (top) and console (bottom) */}
+                <div className="w-[55%] flex flex-col gap-4 min-h-0">
+                    <div className="flex-2 min-h-0 overflow-hidden rounded border border-zinc-800">
                         <ArenaVisualizer
                             events={
                                 runnerState.warehouseEvents as unknown as import("@/components/warehouse/types").WarehouseEventPayload[]
                             }
                         />
                     </div>
-                    <div className="w-[39%] h-full overflow-hidden">
-                        {/* Ensure the sidebar fills this column and scrolls internally */}
-                        <div className="h-full overflow-hidden">
+
+                    <div className="flex-1 min-h-0 overflow-hidden rounded border border-zinc-800 bg-zinc-900">
+                        {/* Make ConsoleOutput scroll internally */}
+                        <div className="h-full min-h-0 overflow-auto">
                             <ConsoleOutput runnerState={runnerState} />
                         </div>
                     </div>
                 </div>
-            </div>
 
-            <main className="flex-1 flex overflow-hidden">
-                <div className="flex-1 flex flex-col relative">
-                    {status !== "connected" && (
-                        <div className="absolute top-0 right-0 p-2 z-10 pointer-events-none">
-                            <span className="text-xs font-medium bg-zinc-900 text-zinc-400 px-2 py-1 rounded border border-zinc-800">
-                                Disconnected - Retrying...
-                            </span>
+                {/* Right column: code editor occupying half width and full height */}
+                <div className="w-[45%] flex flex-col min-h-0 overflow-hidden rounded border border-zinc-800">
+                    <div className="relative flex-1 min-h-0">
+                        {status !== "connected" && (
+                            <div className="absolute top-0 right-0 p-2 z-10 pointer-events-none">
+                                <span className="text-xs font-medium bg-zinc-900 text-zinc-400 px-2 py-1 rounded border border-zinc-800">
+                                    Disconnected - Retrying...
+                                </span>
+                            </div>
+                        )}
+                        <div className="h-full min-h-0">
+                            <CodeEditor
+                                code={code}
+                                language={language}
+                                onChange={handleEditorChange}
+                                theme={theme}
+                            />
                         </div>
-                    )}
-                    <CodeEditor
-                        code={code}
-                        language={language}
-                        onChange={handleEditorChange}
-                        theme={theme}
-                    />
+                    </div>
                 </div>
             </main>
         </div>
