@@ -21,7 +21,7 @@
 import type {
     RunnerEvent as _RunnerEvent,
     StartRunPayload,
-} from "../../runners/bridge";
+} from "@/services/runners/bridge";
 
 type RunnerType = "js" | "go" | "python";
 
@@ -70,17 +70,24 @@ export class RunnerClient {
     private heartbeatTimer: number | null = null;
     private maxRuntimeTimer: number | null = null;
     private options: Required<ClientOptions>;
-    private lastHeartbeatTs: number | null = null;
-    private isRunning = false;
 
     // Map runner type -> worker script URL (module). This uses import.meta.url so bundlers (Vite) can resolve.
     private static RUNNER_SCRIPTS: Record<
         RunnerType,
         { url: URL; type: "module" | "classic" }
     > = {
-        js: { url: new URL("../../runners/js.worker.ts", import.meta.url), type: "module" },
-        go: { url: new URL("../../runners/go.worker.ts", import.meta.url), type: "module" },
-        python: { url: new URL("../../runners/python.worker.ts", import.meta.url), type: "module" },
+        js: {
+            url: new URL("../../runners/js.worker.ts", import.meta.url),
+            type: "module",
+        },
+        go: {
+            url: new URL("../../runners/go.worker.ts", import.meta.url),
+            type: "module",
+        },
+        python: {
+            url: new URL("../../runners/python.worker.ts", import.meta.url),
+            type: "module",
+        },
     };
 
     constructor(opts?: ClientOptions) {
@@ -164,12 +171,13 @@ export class RunnerClient {
             throw new Error("Failed to spawn worker");
         }
 
-        this.isRunning = true;
-        this.lastHeartbeatTs = null;
         // start max runtime timer
         this.clearTimers();
         this.maxRuntimeTimer = window.setTimeout(() => {
-            this.emit("log", { level: "warn", message: "Max runtime exceeded; terminating worker." });
+            this.emit("log", {
+                level: "warn",
+                message: "Max runtime exceeded; terminating worker.",
+            });
             this.killWorker("max_runtime");
         }, this.options.maxRuntimeMs);
 
@@ -195,7 +203,10 @@ export class RunnerClient {
             // Give it a short grace period then force kill
             window.setTimeout(() => {
                 if (this.worker) {
-                    this.emit("log", { level: "warn", message: "STOP_RUN grace elapsed; terminating worker." });
+                    this.emit("log", {
+                        level: "warn",
+                        message: "STOP_RUN grace elapsed; terminating worker.",
+                    });
                     this.terminate();
                 }
             }, 250);
@@ -216,7 +227,6 @@ export class RunnerClient {
             // swallow
         } finally {
             this.worker = null;
-            this.isRunning = false;
             this.clearTimers();
             this.emit("terminated", {});
         }
@@ -241,12 +251,10 @@ export class RunnerClient {
                 this.emit("metric", payload);
                 break;
             case "RUN_COMPLETE":
-                this.isRunning = false;
                 this.clearTimers();
                 this.emit("run_complete", payload);
                 break;
             case "RUN_ERROR":
-                this.isRunning = false;
                 this.clearTimers();
                 this.emit("run_error", payload);
                 break;
@@ -279,13 +287,15 @@ export class RunnerClient {
     }
 
     private touchHeartbeat() {
-        this.lastHeartbeatTs = Date.now();
         // Reset heartbeat timer: if we don't get a heartbeat within heartbeatTimeoutMs, kill
         if (this.heartbeatTimer) {
             window.clearTimeout(this.heartbeatTimer);
         }
         this.heartbeatTimer = window.setTimeout(() => {
-            this.emit("log", { level: "error", message: "No heartbeat detected; terminating worker." });
+            this.emit("log", {
+                level: "error",
+                message: "No heartbeat detected; terminating worker.",
+            });
             this.killWorker("heartbeat_timeout");
         }, this.options.heartbeatTimeoutMs);
     }
@@ -318,7 +328,6 @@ export class RunnerClient {
                 this.worker = null;
             }
         } finally {
-            this.isRunning = false;
             this.clearTimers();
             this.emit("dead", { reason });
         }
