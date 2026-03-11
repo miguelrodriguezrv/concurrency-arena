@@ -1,0 +1,47 @@
+services:
+    backend:
+        build:
+            context: ./backend
+            dockerfile: Dockerfile
+        container_name: ca-backend
+        # Expose makes the port available to other services on the user-defined network,
+        # but not published to the host.
+        expose:
+            - "8080"
+        environment:
+            - PORT=8080
+            # Add other env vars here (DB_URL, SECRET, etc.)
+        restart: unless-stopped
+        networks:
+            - ca-network
+
+    frontend:
+        build:
+            context: ./frontend
+            dockerfile: Dockerfile
+        container_name: ca-frontend
+        # For local development we bind port 8080 on the host to nginx:80 in the container.
+        # In production you can remove this ports mapping and rely on cloudflared as the only public-facing component.
+        ports:
+            - "80:80"
+        depends_on:
+            - backend
+        restart: unless-stopped
+        networks:
+            - ca-network
+
+    cloudflared:
+        image: cloudflare/cloudflared:latest
+        container_name: ca-cloudflared
+        depends_on:
+            - frontend
+        volumes:
+            - ./cloudflared:/etc/cloudflared:ro
+        command: tunnel --url http://frontend:80
+        restart: unless-stopped
+        networks:
+            - ca-network
+
+networks:
+    ca-network:
+        driver: bridge

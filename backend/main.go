@@ -51,15 +51,10 @@ func main() {
 	})
 
 	// Health Check / Basic Info
-	// Keep a lightweight health endpoint at /healthz; the SPA will be served from the static handler.
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.Write([]byte("Concurrency Arena Relay Server is running.\nConnect to /api/ws to establish a WebSocket connection."))
 	})
-
-	// Register the static SPA handler (serves the production frontend bundle from backend/static).
-	// This should be called after API routes are registered so API endpoints take precedence.
-	registerStaticHandler("static")
 
 	log.Printf("Starting Concurrency Arena relay server on %s", *addr)
 
