@@ -40,7 +40,21 @@ export const useWebSocket = () => {
 
     const [status, setStatus] = useState<
         "disconnected" | "connecting" | "connected"
-    >("disconnected");
+    >(() => {
+        try {
+            const rs = wsClient.readyState;
+            if (typeof WebSocket !== "undefined") {
+                if (rs === WebSocket.OPEN) return "connected";
+                if (rs === WebSocket.CONNECTING) return "connecting";
+                return "disconnected";
+            } else {
+                // Fallback: treat readyState 1 as open
+                return rs === 1 ? "connected" : "disconnected";
+            }
+        } catch {
+            return "disconnected";
+        }
+    });
 
     useEffect(() => {
         // Handlers for events emitted by the wsClient service
@@ -130,38 +144,28 @@ export const useWebSocket = () => {
 
         // Start or stop the client based on session token presence
         // Immediately sync UI status to the client's current readyState to avoid races
-        try {
-            const rs = wsClient.readyState;
-            if (typeof WebSocket !== "undefined") {
-                if (rs === WebSocket.OPEN) {
-                    setStatus("connected");
-                } else if (rs === WebSocket.CONNECTING) {
-                    setStatus("connecting");
-                } else {
-                    setStatus("disconnected");
-                }
-            } else {
-                // Fallback: treat readyState 1 as open
-                if (rs === 1) setStatus("connected");
-            }
-        } catch {
-            // ignore sync errors
-        }
+        // initial status is derived from wsClient.readyState in the state initializer above
 
         if (session?.token) {
             wsClient.start(session.token);
-            // After requesting start, immediately re-sync in case the socket is already open
+            // After requesting start, re-sync asynchronously to avoid synchronous setState during effect
             try {
                 const rs2 = wsClient.readyState;
                 if (typeof WebSocket !== "undefined") {
-                    if (rs2 === WebSocket.OPEN) setStatus("connected");
+                    if (rs2 === WebSocket.OPEN)
+                        setTimeout(() => setStatus("connected"), 0);
                     else if (rs2 === WebSocket.CONNECTING)
-                        setStatus("connecting");
-                } else if (rs2 === 1) setStatus("connected");
-            } catch {}
+                        setTimeout(() => setStatus("connecting"), 0);
+                } else if (rs2 === 1) {
+                    setTimeout(() => setStatus("connected"), 0);
+                }
+            } catch {
+                // Swallow errors
+            }
         } else {
             wsClient.stop();
-            setStatus("disconnected");
+            // Defer the state update to avoid synchronous setState within the effect body
+            setTimeout(() => setStatus("disconnected"), 0);
         }
 
         return () => {

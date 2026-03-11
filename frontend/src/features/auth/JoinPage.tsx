@@ -90,12 +90,7 @@ export default function JoinPage() {
             // route `/api/*` to the backend service inside Docker Compose.
             // If VITE_BACKEND_URL is provided it will be used; otherwise backendBase
             // is an empty string and fetch calls become relative (e.g. `/api/...`).
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const backendBase =
-                (typeof import.meta !== "undefined" &&
-                    (import.meta as any).env &&
-                    (import.meta as any).env.VITE_BACKEND_URL) ||
-                "";
+            const backendBase = import.meta?.env?.VITE_BACKEND_URL ?? "";
 
             const response = await fetch(`${backendBase}/api/join`, {
                 method: "POST",

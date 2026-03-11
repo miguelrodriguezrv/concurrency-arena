@@ -1,3 +1,6 @@
+//go:build js && wasm
+
+// This file is intended to be built for WebAssembly (js/wasm).
 package main
 
 import (

@@ -72,7 +72,6 @@ export async function initMonaco(): Promise<void> {
     });
 
     // --- Python Completion Provider ---
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     monaco.languages.registerCompletionItemProvider("python", {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         provideCompletionItems: (model: any, position: any) => {

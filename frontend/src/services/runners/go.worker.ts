@@ -63,7 +63,6 @@ const initGoWasm = async () => {
         const script = await response.text();
 
         // Evaluate the glue code to define the 'Go' global
-        // eslint-disable-next-line no-eval
         (0, eval)(script);
 
         if (typeof Go === "undefined") {
@@ -160,7 +159,7 @@ self.addEventListener("message", async (e: MessageEvent<RunnerCommand>) => {
             // This is non-fatal: if the module isn't resolvable in this worker environment,
             // we simply proceed without the warehouse instrumentation.
             let warehouseUnsub: (() => void) | null = null;
-            let warehouseInstance: any = null;
+            let warehouseInstance = null;
             try {
                 // Use dynamic import so bundlers/workers that can't resolve the module won't crash here.
                 // The path mirrors the project's source layout; if your bundler supports path aliases
@@ -180,17 +179,15 @@ self.addEventListener("message", async (e: MessageEvent<RunnerCommand>) => {
                         warehouseInstance &&
                         typeof warehouseInstance.onEvent === "function"
                     ) {
-                        warehouseUnsub = warehouseInstance.onEvent(
-                            (ev: any) => {
-                                postEvent({
-                                    type: "WAREHOUSE_EVENT",
-                                    payload: ev,
-                                });
-                            },
-                        ) as any;
+                        warehouseUnsub = warehouseInstance.onEvent((ev) => {
+                            postEvent({
+                                type: "WAREHOUSE_EVENT",
+                                payload: ev,
+                            });
+                        }) as any;
                     }
                 }
-            } catch (err) {
+            } catch {
                 // Non-fatal: continue without warehouse forwarding
             }
 
@@ -200,7 +197,7 @@ self.addEventListener("message", async (e: MessageEvent<RunnerCommand>) => {
             // Cleanup any created warehouse instance
             try {
                 if (warehouseUnsub) warehouseUnsub();
-            } catch (e) {
+            } catch {
                 // ignore
             }
             try {
@@ -210,7 +207,7 @@ self.addEventListener("message", async (e: MessageEvent<RunnerCommand>) => {
                 ) {
                     warehouseInstance.dispose();
                 }
-            } catch (e) {
+            } catch {
                 // ignore
             }
 

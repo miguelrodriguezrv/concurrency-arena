@@ -40,6 +40,7 @@ type EventName =
     | "error"
     | "message"; // raw parsed message
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Callback = (arg?: any) => void;
 
 /**
@@ -65,6 +66,7 @@ class Emitter {
         if (set.size === 0) this.listeners.delete(event);
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     emit(event: string, payload?: any) {
         const set = this.listeners.get(event);
         if (!set) return;
@@ -75,7 +77,6 @@ class Emitter {
             } catch (err) {
                 // Swallow handler errors to avoid crashing the emitter loop
                 // Consumers should handle their own errors
-                // eslint-disable-next-line no-console
                 console.error("WS emitter callback error:", err);
             }
         });
@@ -171,16 +172,14 @@ export class WSClient {
      * Respects VITE_WS_URL when present, DEV fallback to localhost:8080, otherwise derive from location.
      */
     private resolveUrl(): string {
-        // Use explicit VITE_WS_URL when provided.
-        // Otherwise, default to same-origin websocket endpoint derived from window.location.
-        // For server-side execution (no window), fall back to localhost so server-side
-        // code that attempts to construct the URL doesn't hard-fail.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const env =
-            typeof import.meta !== "undefined" ? (import.meta as any).env : {};
-        if (env && env.VITE_WS_URL) return env.VITE_WS_URL;
+        const envUrl = import.meta.env.VITE_WS_URL;
+        if (envUrl) return envUrl;
 
-        // Same-origin: use current page origin to build ws/wss URL and attach the API path.
+        // If running outside a browser (e.g. SSR), fall back to localhost.
+        if (typeof window === "undefined" || !window.location) {
+            return "ws://localhost:8080/api/ws";
+        }
+
         const proto = window.location.protocol === "https:" ? "wss" : "ws";
         return `${proto}://${window.location.host}/api/ws`;
     }
