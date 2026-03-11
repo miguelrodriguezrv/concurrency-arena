@@ -171,25 +171,16 @@ export class WSClient {
      * Respects VITE_WS_URL when present, DEV fallback to localhost:8080, otherwise derive from location.
      */
     private resolveUrl(): string {
-        // NOTE: import.meta.env is available in the build environment; we use it here for parity.
-        // If it's not present, the checks below will fall back to deriving from window.location.
+        // Use explicit VITE_WS_URL when provided.
+        // Otherwise, default to same-origin websocket endpoint derived from window.location.
+        // For server-side execution (no window), fall back to localhost so server-side
+        // code that attempts to construct the URL doesn't hard-fail.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const env =
             typeof import.meta !== "undefined" ? (import.meta as any).env : {};
         if (env && env.VITE_WS_URL) return env.VITE_WS_URL;
 
-        if (env && env.DEV) {
-            const proto =
-                typeof window !== "undefined" &&
-                window.location.protocol === "https:"
-                    ? "wss"
-                    : "ws";
-            return `${proto}://localhost:8080/api/ws`;
-        }
-
-        if (typeof window === "undefined") {
-            return "ws://localhost:8080/api/ws";
-        }
+        // Same-origin: use current page origin to build ws/wss URL and attach the API path.
         const proto = window.location.protocol === "https:" ? "wss" : "ws";
         return `${proto}://${window.location.host}/api/ws`;
     }

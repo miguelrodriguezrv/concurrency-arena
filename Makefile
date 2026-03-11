@@ -9,10 +9,12 @@ BACKEND_STATIC_DIR := $(BACKEND_DIR)/static
 BIN_DIR := bin
 BACKEND_BIN := $(BIN_DIR)/relay
 
-.PHONY: all build frontend build-frontend build-backend bundle clean run docker-build
+.PHONY: all build frontend build-frontend build-wasm bundle build-backend clean run docker-build
 
 all: build
 
+# Top-level build: frontend -> copy into backend/static -> build backend native binary
+# Note: wasm build/compression is intentionally detached (see build-wasm targets)
 build: build-frontend bundle build-backend
 
 # Build frontend (production)
@@ -35,12 +37,46 @@ bundle: build-frontend
 	mkdir -p $(BACKEND_STATIC_DIR)
 	cp -r $(FRONTEND_BUILD_DIR)/* $(BACKEND_STATIC_DIR)/
 
-# Build backend binary (output in ./bin)
+# Build wasm (compile then compress). This target compiles the wasm package and
+# produces both pre-compressed artifacts (.br and .gz) for efficient serving.
+# This is intentionally a separate step because the wasm rarely changes.
+build-wasm: build-wasm-compile compress-wasm
+	@echo "==> build-wasm complete (compiled + compressed)"
+
+# Compile the WASM runner into backend/static/main.wasm
+build-wasm-compile:
+	@echo "==> Building WASM runner (GOOS=js GOARCH=wasm)"
+	mkdir -p $(BACKEND_STATIC_DIR)
+	cd $(BACKEND_DIR) && \
+		GOOS=js GOARCH=wasm go build -ldflags "-s -w" -o static/main.wasm ./wasm
+
+# Compress the compiled wasm with Brotli and gzip (if available)
+compress-wasm:
+	@echo "==> Compressing WASM (brotli + gzip)"
+	if [ ! -f $(BACKEND_STATIC_DIR)/main.wasm ]; then \
+	  echo "Error: $(BACKEND_STATIC_DIR)/main.wasm not found. Run build-wasm-compile first."; exit 1; \
+	fi
+	# Brotli (high quality) - skip if brotli not available
+	if command -v brotli >/dev/null 2>&1; then \
+	  echo "  - brotli (high quality)"; \
+	  brotli -q 11 -o $(BACKEND_STATIC_DIR)/main.wasm.br $(BACKEND_STATIC_DIR)/main.wasm || true; \
+	else \
+	  echo "  - brotli not found; skipping .br generation"; \
+	fi
+	# gzip (max compression)
+	if command -v gzip >/dev/null 2>&1; then \
+	  echo "  - gzip"; \
+	  gzip -9 -c $(BACKEND_STATIC_DIR)/main.wasm > $(BACKEND_STATIC_DIR)/main.wasm.gz || true; \
+	else \
+	  echo "  - gzip not found; skipping .gz generation"; \
+	fi
+
+# Build backend binary - only build the main package (.) to avoid compiling everything (./...)
 build-backend:
 	@echo "==> Building backend"
 	mkdir -p $(BIN_DIR)
 	cd $(BACKEND_DIR) && \
-	CGO_ENABLED=0 go build -ldflags "-s -w" -o ../$(BACKEND_BIN) ./...
+		CGO_ENABLED=0 go build -ldflags "-s -w" -o ../$(BACKEND_BIN) .
 
 run: build
 	@echo "==> Running backend binary"

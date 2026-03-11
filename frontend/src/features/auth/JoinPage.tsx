@@ -85,10 +85,19 @@ export default function JoinPage() {
         setIsLoading(true);
 
         try {
-            const backendUrl =
-                import.meta.env.VITE_BACKEND_URL || "http://localhost:8080";
+            // Prefer an explicit VITE_BACKEND_URL (useful for local dev). By default
+            // use relative same-origin requests so the nginx frontend proxy can
+            // route `/api/*` to the backend service inside Docker Compose.
+            // If VITE_BACKEND_URL is provided it will be used; otherwise backendBase
+            // is an empty string and fetch calls become relative (e.g. `/api/...`).
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const backendBase =
+                (typeof import.meta !== "undefined" &&
+                    (import.meta as any).env &&
+                    (import.meta as any).env.VITE_BACKEND_URL) ||
+                "";
 
-            const response = await fetch(`${backendUrl}/api/join`, {
+            const response = await fetch(`${backendBase}/api/join`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
