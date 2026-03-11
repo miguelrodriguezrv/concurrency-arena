@@ -25,6 +25,7 @@ import type {
 
 type RunnerType = "js" | "go" | "python";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Listener = (payload?: any) => void;
 
 interface ClientOptions {
