@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Terminal } from "lucide-react";
+import { Terminal, Clock, TrendingUp, AlertCircle } from "lucide-react";
 import type { RunnerState } from "@/hooks/useCodeRunner";
+import useWarehouseMetrics from "@/components/warehouse/useWarehouseMetrics";
+import MetricBadge from "@/components/warehouse/MetricBadge";
+import type { WarehouseEventPayload } from "@/components/warehouse/types";
 
 interface ConsoleOutputProps {
     runnerState: RunnerState;
@@ -13,6 +16,11 @@ export default function ConsoleOutput({ runnerState }: ConsoleOutputProps) {
 
     const [autoScroll, setAutoScroll] = useState(true);
     const [userScrolledUp, setUserScrolledUp] = useState(false);
+
+    // Shared warehouse metrics for display in the console header
+    const events = (runnerState.warehouseEvents || []) as WarehouseEventPayload[];
+    const { elapsedMs, metrics, throughputUnitsPerMin } =
+        useWarehouseMetrics(events);
 
     // Keep the console pinned to the bottom when autoScroll is enabled.
     useEffect(() => {
@@ -45,6 +53,41 @@ export default function ConsoleOutput({ runnerState }: ConsoleOutputProps) {
                     <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
                         CONSOLE OUTPUT
                     </h3>
+                    <div className="ml-3 flex items-center space-x-2">
+                        <MetricBadge
+                            label="Time"
+                            value={`${(elapsedMs / 1000).toFixed(1)}s`}
+                            icon={<Clock size={12} className="text-emerald-400" />}
+                            tooltip="Elapsed time"
+                        />
+                        <MetricBadge
+                            label="Throughput"
+                            value={throughputUnitsPerMin.toFixed(1)}
+                            icon={<TrendingUp size={12} className="text-indigo-400" />}
+                            tooltip="Units per minute"
+                            colorClass="text-indigo-400"
+                        />
+                        <MetricBadge
+                            label="Violations"
+                            value={(metrics?.errorCount || 0).toString()}
+                            icon={
+                                <AlertCircle
+                                    size={12}
+                                    className={
+                                        (metrics?.errorCount || 0) > 0
+                                            ? "text-rose-500"
+                                            : "text-zinc-500"
+                                    }
+                                />
+                            }
+                            tooltip="Race conditions / Errors"
+                            colorClass={
+                                (metrics?.errorCount || 0) > 0
+                                    ? "text-rose-500"
+                                    : "text-zinc-300"
+                            }
+                        />
+                    </div>
                 </div>
                 <div className="text-[10px] font-bold text-zinc-500 uppercase">
                     {runnerState.status}

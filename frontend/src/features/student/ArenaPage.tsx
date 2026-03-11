@@ -5,7 +5,7 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 import { useCodeRunner, type SupportedLanguage } from "@/hooks/useCodeRunner";
 import CodeEditor from "@/components/editor/CodeEditor";
 import ArenaHeader from "./ArenaHeader";
-import ConsoleOutput from "./ConsoleOutput";
+import ConsoleOutput from "../../components/ConsoleOutput";
 import IncomingDiffModal from "@/components/editor/IncomingDiffModal";
 import {
     DEFAULT_JS_CODE,
@@ -19,6 +19,7 @@ import {
     setCurrentLanguage,
 } from "@/lib/storage";
 import { ArenaVisualizer } from "@/components/warehouse/ArenaVisualizer";
+import { SplitPane, Pane } from "react-split-pane";
 
 export default function ArenaPage() {
     const navigate = useNavigate();
@@ -49,6 +50,11 @@ export default function ArenaPage() {
         if (initialLanguage === "python") return DEFAULT_PYTHON_CODE;
         return DEFAULT_JS_CODE;
     });
+
+    // Split pane state (react-split-pane).
+    const [leftSize, setLeftSize] = useState<string | number>("55%");
+
+    const [leftCollapsed, setLeftCollapsed] = useState<boolean>(false);
 
     const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const initialSyncRef = useRef(false);
@@ -269,6 +275,19 @@ export default function ArenaPage() {
         navigate("/");
     };
 
+    // Collapse / expand left pane (visualizer + console).
+    const toggleLeftCollapsed = () => {
+        if (leftCollapsed) {
+            // expand: restore default width
+            setLeftSize("55%");
+            setLeftCollapsed(false);
+        } else {
+            // collapse: hide left pane
+            setLeftSize(0);
+            setLeftCollapsed(true);
+        }
+    };
+
     return (
         <div className="relative flex flex-col h-screen w-full bg-zinc-950 text-zinc-100 font-sans overflow-hidden">
             <ArenaHeader
@@ -304,6 +323,8 @@ export default function ArenaPage() {
                 onRun={handleRunLocal}
                 onReset={handleReset}
                 onLogout={handleLogout}
+                onToggleVisualizer={toggleLeftCollapsed}
+                visualizerHidden={leftCollapsed}
             />
             <IncomingDiffModal
                 open={diffOpen}
@@ -315,45 +336,78 @@ export default function ArenaPage() {
                 onClose={handleCloseIncoming}
             />
 
-            {/* Main area: left column with visualizer (top) + console (bottom); right column is the editor (half width, full height) */}
-            <main className="flex-1 flex overflow-hidden p-4 gap-4">
-                {/* Left column: visualizer (top) and console (bottom) */}
-                <div className="w-[55%] flex flex-col gap-4 min-h-0">
-                    <div className="flex-2 min-h-0 overflow-hidden rounded border border-zinc-800">
-                        <ArenaVisualizer
-                            events={
-                                runnerState.warehouseEvents as unknown as import("@/components/warehouse/types").WarehouseEventPayload[]
-                            }
-                        />
-                    </div>
+            {/* Main area: left column (visualizer + console) and right column (editor) managed by react-split-pane */}
+            <main className="flex-1 flex overflow-hidden p-4 gap-4 min-h-0">
+                <div className="w-full min-h-0">
+                    <SplitPane
+                        direction="horizontal"
+                        resizable={!leftCollapsed}
+                        dividerClassName="w-4 -mx-2 flex items-center justify-center bg-transparent hover:bg-blue-600 cursor-col-resize transition-colors"
+                        dividerStyle={{ width: 12 }}
+                    >
+                        {/* Left pane: visualizer (top) and console (bottom) */}
+                        <Pane
+                            size={leftCollapsed ? 0 : leftSize}
+                            minSize="200px"
+                            style={{ overflow: "hidden" }}
+                        >
+                            <div className="flex flex-col gap-4 min-h-0 h-full">
+                                <div
+                                    className={
+                                        "flex-2 min-h-0 relative overflow-hidden rounded border border-zinc-800 " +
+                                        (leftCollapsed
+                                            ? "opacity-0 pointer-events-none"
+                                            : "")
+                                    }
+                                >
+                                    <ArenaVisualizer
+                                        events={
+                                            runnerState.warehouseEvents as unknown as import("@/components/warehouse/types").WarehouseEventPayload[]
+                                        }
+                                    />
+                                </div>
 
-                    <div className="flex-1 min-h-0 overflow-hidden rounded border border-zinc-800 bg-zinc-900">
-                        {/* Make ConsoleOutput scroll internally */}
-                        <div className="h-full min-h-0 overflow-auto">
-                            <ConsoleOutput runnerState={runnerState} />
-                        </div>
-                    </div>
-                </div>
-
-                {/* Right column: code editor occupying half width and full height */}
-                <div className="w-[45%] flex flex-col min-h-0 overflow-hidden rounded border border-zinc-800">
-                    <div className="relative flex-1 min-h-0">
-                        {status !== "connected" && (
-                            <div className="absolute top-0 right-0 p-2 z-10 pointer-events-none">
-                                <span className="text-xs font-medium bg-zinc-900 text-zinc-400 px-2 py-1 rounded border border-zinc-800">
-                                    Disconnected - Retrying...
-                                </span>
+                                <div
+                                    className={
+                                        "flex-1 min-h-0 overflow-hidden rounded border border-zinc-800 bg-zinc-900 " +
+                                        (leftCollapsed
+                                            ? "opacity-0 pointer-events-none"
+                                            : "")
+                                    }
+                                >
+                                    {/* Make ConsoleOutput scroll internally */}
+                                    <div className="h-full min-h-0 overflow-auto">
+                                        <ConsoleOutput
+                                            runnerState={runnerState}
+                                        />
+                                    </div>
+                                </div>
                             </div>
-                        )}
-                        <div className="h-full min-h-0">
-                            <CodeEditor
-                                code={code}
-                                language={language}
-                                onChange={handleEditorChange}
-                                theme={theme}
-                            />
-                        </div>
-                    </div>
+                        </Pane>
+
+                        {/* Right pane: code editor occupying remaining width */}
+                        <Pane style={{ overflow: "hidden" }}>
+                            <div className="flex flex-col min-h-0 overflow-hidden rounded border border-zinc-800 relative h-full">
+                                <div className="relative flex-1 min-h-0">
+                                    {status !== "connected" && (
+                                        <div className="absolute top-0 right-0 p-2 z-10 pointer-events-none">
+                                            <span className="text-xs font-medium bg-zinc-900 text-zinc-400 px-2 py-1 rounded border border-zinc-800">
+                                                Disconnected - Retrying...
+                                            </span>
+                                        </div>
+                                    )}
+                                    <div className="h-full min-h-0">
+                                        <CodeEditor
+                                            code={code}
+                                            language={language}
+                                            onChange={handleEditorChange}
+                                            theme={theme}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        </Pane>
+                    </SplitPane>
                 </div>
             </main>
         </div>

@@ -9,6 +9,8 @@ import {
     RotateCcw,
     Sun,
     Moon,
+    PanelRightOpen,
+    PanelRightClose,
 } from "lucide-react";
 import type { SupportedLanguage, RunnerState } from "@/hooks/useCodeRunner";
 import { useStore } from "@/store";
@@ -22,6 +24,8 @@ interface ArenaHeaderProps {
     onRun: () => void;
     onReset: () => void;
     onLogout: () => void;
+    onToggleVisualizer: () => void;
+    visualizerHidden: boolean;
 }
 
 export default function ArenaHeader({
@@ -33,6 +37,8 @@ export default function ArenaHeader({
     onRun,
     onReset,
     onLogout,
+    onToggleVisualizer,
+    visualizerHidden,
 }: ArenaHeaderProps) {
     const isRunning = runnerState.status === "running";
 
@@ -64,12 +70,38 @@ export default function ArenaHeader({
                     </span>
                 </div>
 
-                <div title={`${status}`}>
-                    {status === "connected" ? (
-                        <Wifi size={16} className="text-emerald-500" />
-                    ) : (
-                        <WifiOff size={16} className="text-rose-500" />
-                    )}
+                <div className="flex items-center gap-4">
+                    <div title={`${status}`}>
+                        {status === "connected" ? (
+                            <Wifi size={16} className="text-emerald-500" />
+                        ) : (
+                            <WifiOff size={16} className="text-rose-500" />
+                        )}
+                    </div>
+
+                    {/* Visualizer toggle moved into header (right of status icon) */}
+                    <button
+                        onClick={onToggleVisualizer}
+                        className="p-1 rounded-md bg-zinc-900 hover:bg-zinc-800 border border-zinc-800"
+                        title={
+                            visualizerHidden
+                                ? "Show Visualizer"
+                                : "Hide Visualizer"
+                        }
+                        aria-pressed={visualizerHidden}
+                    >
+                        {visualizerHidden ? (
+                            <PanelRightClose
+                                size={20}
+                                className="text-zinc-300"
+                            />
+                        ) : (
+                            <PanelRightOpen
+                                size={20}
+                                className="text-zinc-300"
+                            />
+                        )}
+                    </button>
                 </div>
             </div>
 

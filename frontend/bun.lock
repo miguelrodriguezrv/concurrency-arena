@@ -12,6 +12,7 @@
         "react-dom": "^19.2.0",
         "react-hot-toast": "^2.6.0",
         "react-router-dom": "^7.13.1",
+        "react-split-pane": "^3.2.0",
         "uuid": "^13.0.0",
         "zod": "^4.3.6",
         "zustand": "^5.0.11",
@@ -518,6 +519,8 @@
     "react-router": ["react-router@7.13.1", "", { "dependencies": { "cookie": "^1.0.1", "set-cookie-parser": "^2.6.0" }, "peerDependencies": { "react": ">=18", "react-dom": ">=18" }, "optionalPeers": ["react-dom"] }, "sha512-td+xP4X2/6BJvZoX6xw++A2DdEi++YypA69bJUV5oVvqf6/9/9nNlD70YO1e9d3MyamJEBQFEzk6mbfDYbqrSA=="],
 
     "react-router-dom": ["react-router-dom@7.13.1", "", { "dependencies": { "react-router": "7.13.1" }, "peerDependencies": { "react": ">=18", "react-dom": ">=18" } }, "sha512-UJnV3Rxc5TgUPJt2KJpo1Jpy0OKQr0AjgbZzBFjaPJcFOb2Y8jA5H3LT8HUJAiRLlWrEXWHbF1Z4SCZaQjWDHw=="],
+
+    "react-split-pane": ["react-split-pane@3.2.0", "", { "peerDependencies": { "react": "^17.0.0 || ^18.0.0 || ^19.0.0", "react-dom": "^17.0.0 || ^18.0.0 || ^19.0.0" } }, "sha512-tH2SaMqBZ7Ypcmj6I/2fIR0gdeE0Q5ve66T51UyXcSqIgPGJh40bOMTVCAFjB0Q3OB5+Aw/4ECVWU+YU9SL88Q=="],
 
     "resolve-from": ["resolve-from@4.0.0", "", {}, "sha512-pb/MYmXstAkysRFx8piNI1tGFNQIFA3vkE3Gq4EuA1dF6gHp/+vgZqsCGJapvy8N3Q+4o7FwvquPJcnZ7RYy4g=="],
 

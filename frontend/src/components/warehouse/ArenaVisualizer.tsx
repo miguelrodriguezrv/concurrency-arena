@@ -1,11 +1,8 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { WarehouseEventPayload } from "./types";
-import { Clock, Zap, Printer, AlertCircle, TrendingUp } from "lucide-react";
 import { LAYOUT, getPackageCoords } from "./layout";
 import { visualReducer, initialState } from "./visualReducer";
-import useWarehouseMetrics from "./useWarehouseMetrics";
-import MetricBadge from "./MetricBadge";
 
 interface ArenaVisualizerProps {
     events?: WarehouseEventPayload[];
@@ -16,9 +13,6 @@ export function ArenaVisualizer({ events = [] }: ArenaVisualizerProps) {
     const processedCountRef = useRef(0);
     const [runId, setRunId] = useState(0);
 
-    // Shared metrics hook (single source-of-truth)
-    const { elapsedMs, metrics, throughputUnitsPerMin } =
-        useWarehouseMetrics(events);
 
     useEffect(() => {
         if (!events || events.length === 0) {
@@ -143,61 +137,14 @@ export function ArenaVisualizer({ events = [] }: ArenaVisualizerProps) {
             <div className="absolute left-0 top-0 w-35 h-full border-r-4 border-dashed border-zinc-700 bg-zinc-800/50" />
 
             {/* Labels + contextual metric badges */}
-            <div className="absolute top-4 left-5 text-[10px] font-bold text-zinc-500 uppercase tracking-widest z-10 flex items-center gap-3">
+            <div className="absolute top-4 left-5 text-[10px] font-bold text-zinc-500 uppercase tracking-widest z-10">
                 <span>Intake</span>
-                <MetricBadge
-                    label="Intake Concurrency"
-                    value={
-                        metrics.intakeEfficiency > 0
-                            ? metrics.intakeEfficiency.toFixed(2)
-                            : "-"
-                    }
-                    icon={<Zap size={12} className="text-amber-400" />}
-                    tooltip="Avg Active Workers (Max 4)"
-                />
             </div>
             <div className="absolute top-4 left-40 text-[10px] font-bold text-zinc-500 uppercase tracking-widest z-10">
                 Processing
             </div>
             <div className="absolute top-4 left-135 text-[10px] font-bold text-zinc-500 uppercase tracking-widest z-10">
                 Shipping
-            </div>
-
-            {/* Small global metrics (top-right) */}
-            <div className="absolute top-4 right-6 z-20 flex items-center space-x-3">
-                <MetricBadge
-                    label="Time"
-                    value={`${(elapsedMs / 1000).toFixed(1)}s`}
-                    icon={<Clock size={12} className="text-emerald-400" />}
-                    tooltip="Elapsed time"
-                />
-                <MetricBadge
-                    label="Throughput"
-                    value={throughputUnitsPerMin.toFixed(1)}
-                    icon={<TrendingUp size={12} className="text-indigo-400" />}
-                    tooltip="Units per minute"
-                    colorClass="text-indigo-400"
-                />
-                <MetricBadge
-                    label="Violations"
-                    value={metrics.errorCount.toString()}
-                    icon={
-                        <AlertCircle
-                            size={12}
-                            className={
-                                metrics.errorCount > 0
-                                    ? "text-rose-500"
-                                    : "text-zinc-500"
-                            }
-                        />
-                    }
-                    tooltip="Race conditions / Errors"
-                    colorClass={
-                        metrics.errorCount > 0
-                            ? "text-rose-500"
-                            : "text-zinc-300"
-                    }
-                />
             </div>
 
             {/* Legend */}
@@ -381,19 +328,6 @@ export function ArenaVisualizer({ events = [] }: ArenaVisualizerProps) {
                             : "bg-zinc-500"
                     }`}
                 />
-
-                {/* Printer badge (efficiency) */}
-                <div className="absolute -top-4 right-0 z-40">
-                    <MetricBadge
-                        label="Printer"
-                        value={`${metrics.printerEfficiency.toFixed(0)}%`}
-                        icon={<Printer size={12} className="text-cyan-400" />}
-                        tooltip={`${(metrics.printerMoveMs / 1000).toFixed(
-                            1,
-                        )}s travel penalty`}
-                    />
-                </div>
-
                 {/* Side Piston extending LEFT towards the package */}
                 <motion.div
                     className="absolute left-0 w-8 h-4 bg-zinc-400 border-2 border-zinc-800 rounded-l-sm flex items-center"
@@ -453,7 +387,7 @@ export function ArenaVisualizer({ events = [] }: ArenaVisualizerProps) {
                             }}
                             animate={{
                                 x: coords.x,
-                                y: coords.y - 15, // -15 to center on Y coordinate
+                                y: coords.y - 15, 
                                 opacity: 1,
                                 scale: 1,
                             }}
