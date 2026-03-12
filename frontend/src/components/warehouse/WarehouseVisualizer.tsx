@@ -1,17 +1,35 @@
-import { useEffect, useReducer, useRef, useState } from "react";
+import { Fragment, useEffect, useReducer, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { WarehouseEventPayload } from "./types";
 import { LAYOUT, getPackageCoords } from "./layout";
 import { visualReducer, initialState } from "./visualReducer";
 
-interface ArenaVisualizerProps {
+interface WarehouseVisualizerProps {
     events?: WarehouseEventPayload[];
 }
 
-export function ArenaVisualizer({ events = [] }: ArenaVisualizerProps) {
+export function WarehouseVisualizer({ events = [] }: WarehouseVisualizerProps) {
     const [state, dispatch] = useReducer(visualReducer, initialState);
     const processedCountRef = useRef(0);
     const [runId, setRunId] = useState(0);
+    const [hover, setHover] = useState<null | { id: number; x: number; y: number }>(
+        null,
+    );
+
+    // current time snapshot updated on an interval to avoid calling impure
+    // time functions during render. The reducer stores `waitStart` using 
+    // `performance.now()` so prefer that when available for consistent units.
+    function useNow(interval = 1000) {
+        const [now, setNow] = useState<number>(() => Date.now());
+        useEffect(() => {
+            setNow(Date.now());
+            const id = setInterval(() => setNow(Date.now()), interval);
+            return () => clearInterval(id);
+        }, [interval]);
+        return now;
+    }
+
+    const now = useNow(1000);
 
 
     useEffect(() => {
@@ -129,8 +147,10 @@ export function ArenaVisualizer({ events = [] }: ArenaVisualizerProps) {
         processedCountRef.current = events.length;
     }, [events]);
 
+    // Tooltip will read processing time and status from the visual state
+
     return (
-        <div className="relative w-full h-115 bg-zinc-900 border-4 border-zinc-800 rounded-xl overflow-hidden shadow-[8px_8px_0px_rgba(0,0,0,0.5)] font-sans">
+        <div className="relative w-full h-115 bg-zinc-900 border-4 border-zinc-800 rounded-xl overflow-visible shadow-[8px_8px_0px_rgba(0,0,0,0.5)] font-sans">
             {/* --- Static Background Elements --- */}
 
             {/* Workers Zone Background */}
@@ -372,78 +392,129 @@ export function ArenaVisualizer({ events = [] }: ArenaVisualizerProps) {
                     }
 
                     return (
-                        <motion.div
-                            key={pkg.id}
-                            className={`absolute w-7.5 h-7.5 ${bgColor} border-2 border-zinc-900 rounded-md shadow-[2px_2px_0px_rgba(0,0,0,0.5)] flex items-center justify-center ${
-                                pkg.isProcessing
-                                    ? "overflow-visible z-30"
-                                    : "overflow-hidden z-20"
-                            }`}
-                            initial={{
-                                x: coords.x - (isLine ? 100 : 0),
-                                y: coords.y,
-                                opacity: 0,
-                                scale: 0.5,
-                            }}
-                            animate={{
-                                x: coords.x,
-                                y: coords.y - 15, 
-                                opacity: 1,
-                                scale: 1,
-                            }}
-                            exit={{ x: coords.x + 50, opacity: 0, scale: 0.5 }}
-                            transition={{
-                                x: {
-                                    type: "tween",
-                                    duration: 0.8,
-                                    ease: "linear",
-                                },
-                                y: {
-                                    type: "tween",
-                                    duration: 0.15,
-                                },
-                                default: {
-                                    type: "spring",
-                                    stiffness: 120,
-                                    damping: 15,
-                                },
-                            }}
-                        >
-                            {pkg.isProcessing && (
-                                <>
-                                    {/* Open box flaps (Both on Top, diagonal perspective) */}
-                                    <div className="absolute -top-3 left-0 w-full h-3 bg-amber-500 border-2 border-b-0 border-zinc-900 origin-bottom transform -skew-x-30 z-0" />
-                                    <div className="absolute -top-3 left-0 w-full h-3 bg-amber-500 border-2 border-b-0 border-zinc-900 origin-bottom transform skew-x-30 z-0" />
-                                    {/* Processing Ring */}
-                                    <svg className="absolute w-6 h-6 z-10 transform -rotate-90">
-                                        <motion.circle
-                                            cx="12"
-                                            cy="12"
-                                            r="10"
-                                            stroke="rgb(34 211 238)"
-                                            strokeWidth="3"
-                                            fill="transparent"
-                                            strokeLinecap="round"
-                                            initial={{ pathLength: 0 }}
-                                            animate={{ pathLength: 1 }}
-                                            transition={{
-                                                duration: pkg.processingMs
-                                                    ? pkg.processingMs / 1000
-                                                    : 1,
-                                                ease: "linear",
-                                            }}
-                                        />
-                                    </svg>
-                                </>
-                            )}
-                            {/* Always visible ID */}
-                            <span className="text-[10px] text-zinc-100 font-bold z-20 relative">
-                                {pkg.id}
-                            </span>
-                        </motion.div>
+                        <Fragment key={`frag-${pkg.id}`}>
+                            <motion.div
+                                key={`pkg-${pkg.id}`}
+                                className={`absolute w-7.5 h-7.5 ${bgColor} border-2 border-zinc-900 rounded-md shadow-[2px_2px_0px_rgba(0,0,0,0.5)] flex items-center justify-center ${
+                                    pkg.isProcessing
+                                        ? "overflow-visible z-30"
+                                        : "overflow-hidden z-20"
+                                }`}
+                                onMouseEnter={() =>
+                                        setHover({ id: pkg.id, x: coords.x, y: coords.y })
+                                    }
+                                    onMouseLeave={() => setHover(null)}
+                                    onPointerEnter={() =>
+                                        setHover({ id: pkg.id, x: coords.x, y: coords.y })
+                                    }
+                                    onPointerLeave={() => setHover(null)}
+                                style={{ pointerEvents: "auto" }}
+                                initial={{
+                                    x: coords.x - (isLine ? 100 : 0),
+                                    y: coords.y,
+                                    opacity: 0,
+                                    scale: 0.5,
+                                }}
+                                animate={{
+                                    x: coords.x,
+                                    y: coords.y - 15, // -15 to center on Y coordinate
+                                    opacity: 1,
+                                    scale: 1,
+                                }}
+                                exit={{ x: coords.x + 50, opacity: 0, scale: 0.5 }}
+                                transition={{
+                                    x: {
+                                        type: "tween",
+                                        duration: 0.8,
+                                        ease: "linear",
+                                    },
+                                    y: {
+                                        type: "tween",
+                                        duration: 0.15,
+                                    },
+                                    default: {
+                                        type: "spring",
+                                        stiffness: 120,
+                                        damping: 15,
+                                    },
+                                }}
+                            >
+                                {pkg.isProcessing && (
+                                    <>
+                                        <div className="absolute -top-3 left-0 w-full h-3 bg-amber-500 border-2 border-b-0 border-zinc-900 origin-bottom transform -skew-x-30 z-0" />
+                                        <div className="absolute -top-3 left-0 w-full h-3 bg-amber-500 border-2 border-b-0 border-zinc-900 origin-bottom transform skew-x-30 z-0" />
+                                        <svg className="absolute w-6 h-6 z-10 transform -rotate-90">
+                                            <motion.circle
+                                                cx="12"
+                                                cy="12"
+                                                r="10"
+                                                stroke="rgb(34 211 238)"
+                                                strokeWidth="3"
+                                                fill="transparent"
+                                                strokeLinecap="round"
+                                                initial={{ pathLength: 0 }}
+                                                animate={{ pathLength: 1 }}
+                                                transition={{
+                                                    duration: pkg.processingMs
+                                                        ? pkg.processingMs / 1000
+                                                        : 1,
+                                                    ease: "linear",
+                                                }}
+                                            />
+                                        </svg>
+                                    </>
+                                )}
+                                <span className="text-[10px] text-zinc-100 font-bold z-20 relative">
+                                    {pkg.id}
+                                </span>
+                            </motion.div>
+
+                            {/* Hover overlay: invisible overlay that sets hover state so tooltip appears */}
+                            <div
+                                key={`dbg-${pkg.id}`}
+                                style={{
+                                    position: "absolute",
+                                    left: coords.x,
+                                    top: coords.y - 15,
+                                    width: LAYOUT.PACKAGE_SIZE,
+                                    height: LAYOUT.PACKAGE_SIZE,
+                                    background: "transparent",
+                                    border: "0px solid transparent",
+                                    zIndex: 20,
+                                    pointerEvents: "auto",
+                                }}
+                                onPointerEnter={() =>
+                                    setHover({ id: pkg.id, x: coords.x, y: coords.y })
+                                }
+                                onPointerLeave={() => setHover(null)}
+                            />
+                        </Fragment>
                     );
                 })}
             </AnimatePresence>
+            {hover && (() => {
+                const pkg = state.packages[hover.id];
+                const proc = pkg?.processingTime ?? pkg?.processingMs ?? null;
+                const status = pkg?.statusString ?? pkg?.stage ?? "unknown";
+                const waitMs = pkg?.waitElapsed !== undefined
+                    ? pkg.waitElapsed
+                    : pkg?.waitStart !== undefined
+                    ? Math.max(0, Math.round(now - pkg.waitStart))
+                    : null;
+                return (
+                    <div
+                        className="absolute z-50 bg-zinc-900 border border-zinc-800 text-zinc-200 text-[11px] px-2 py-1 rounded-md shadow-lg pointer-events-none"
+                        style={{ left: hover.x + 12, top: hover.y - 38 }}
+                    >
+                        <div className="font-mono text-[11px]">ID: {hover.id}</div>
+                        <div className="font-mono text-[11px] text-zinc-300">
+                            processing: {proc !== null ? `${proc}ms` : "—"}
+                        </div>
+                        <div className="font-mono text-[11px] text-zinc-300">status: {status}</div>
+                                <div className="font-mono text-[11px] text-zinc-300">waiting: {waitMs !== null ? `${Math.floor(waitMs / 1000)}s` : "—"}</div>
+                    </div>
+                );
+            })()}
         </div>
     );
 }

@@ -48,6 +48,7 @@ export function visualReducer(state: VisualState, action: Action): VisualState {
                 stage: "DOCK",
                 queueIndex: 0,
                 unloaderId: uId,
+                statusString: "unprocessed",
             };
             return {
                 ...state,
@@ -61,6 +62,10 @@ export function visualReducer(state: VisualState, action: Action): VisualState {
             if (!pkg) return state;
 
             pkg.stage = "INTAKE_BELT";
+            pkg.statusString = "unloaded";
+            // record when the package started waiting using epoch ms (Date.now())
+            pkg.waitStart = Date.now();
+            pkg.waitElapsed = undefined;
             const newIntakeQueue = [...intakeQueue];
             if (!newIntakeQueue.includes(action.packageId)) {
                 newIntakeQueue.push(action.packageId);
@@ -95,6 +100,7 @@ export function visualReducer(state: VisualState, action: Action): VisualState {
             }
 
             pkg.stage = "PROCESSING_LINE";
+            pkg.statusString = "queued";
             pkg.lineId = lineId;
             updateQueueIndices(newPackages, newProcQueue);
 
@@ -114,6 +120,11 @@ export function visualReducer(state: VisualState, action: Action): VisualState {
             if (pkg) {
                 pkg.isProcessing = true;
                 pkg.processingMs = action.processingMs;
+                // Expose the public processingTime when provided by the runtime
+                if (typeof action.processingMs === "number") {
+                    pkg.processingTime = action.processingMs;
+                }
+                pkg.statusString = "processing";
             }
             return { ...state, packages: newPackages };
         }
@@ -123,6 +134,7 @@ export function visualReducer(state: VisualState, action: Action): VisualState {
             if (pkg) {
                 pkg.isProcessing = false;
                 pkg.isProcessed = true;
+                pkg.statusString = "processed";
             }
             return { ...state, packages: newPackages };
         }
@@ -150,6 +162,7 @@ export function visualReducer(state: VisualState, action: Action): VisualState {
             const pkg = newPackages[action.packageId];
             if (pkg) {
                 pkg.stage = "PRINTING";
+                pkg.statusString = "printing";
             }
             return {
                 ...state,
@@ -168,6 +181,7 @@ export function visualReducer(state: VisualState, action: Action): VisualState {
             if (pkg) {
                 pkg.shippingLine = action.laneId;
                 pkg.isPrinted = true;
+                pkg.statusString = "printed";
             }
             return {
                 ...state,
@@ -196,6 +210,7 @@ export function visualReducer(state: VisualState, action: Action): VisualState {
             }
 
             pkg.stage = "SHIPPING_LINE";
+            pkg.statusString = "shipping";
             pkg.shippingLine = laneId;
             updateQueueIndices(newPackages, newShipQueue);
 
@@ -228,7 +243,14 @@ export function visualReducer(state: VisualState, action: Action): VisualState {
                 );
                 updateQueueIndices(newPackages, newShipQueue);
 
+                // finalize wait time using event timestamp if available
+                const endTs = Date.now();
+                if (pkg.waitStart !== undefined) {
+                    pkg.waitElapsed = Math.max(0, endTs - pkg.waitStart);
+                }
+
                 pkg.stage = "SHIPPED";
+                pkg.statusString = "shipped";
 
                 return {
                     ...state,
@@ -240,7 +262,13 @@ export function visualReducer(state: VisualState, action: Action): VisualState {
                 };
             }
 
+            // finalize wait time even if shipping lane wasn't recorded
+            const endTs = Date.now();
+            if (pkg.waitStart !== undefined) {
+                pkg.waitElapsed = Math.max(0, endTs - pkg.waitStart);
+            }
             pkg.stage = "SHIPPED";
+            pkg.statusString = "shipped";
             return { ...state, packages: newPackages };
         }
 

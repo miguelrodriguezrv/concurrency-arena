@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal, Clock, TrendingUp, AlertCircle } from "lucide-react";
 import type { RunnerState } from "@/hooks/useCodeRunner";
 import useWarehouseMetrics from "@/components/warehouse/useWarehouseMetrics";
-import MetricBadge from "@/components/warehouse/MetricBadge";
+import MetricBadge from "@/components/console/MetricBadge";
 import type { WarehouseEventPayload } from "@/components/warehouse/types";
 
 interface ConsoleOutputProps {

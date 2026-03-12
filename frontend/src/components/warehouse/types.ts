@@ -17,6 +17,12 @@ export interface VisualPackage {
     isProcessed?: boolean;
     isPrinted?: boolean;
     processingMs?: number;
+    // Waiting tracking
+    waitStart?: number; // timestamp when package was unloaded (performance.now())
+    waitElapsed?: number; // finalized wait time in ms when shipped
+    // Public fields derived from the Warehouse runtime's PackagePublic
+    processingTime?: number; // ms (public processing time)
+    statusString?: string; // e.g. 'unloaded', 'processed', 'printed', 'shipped'
 }
 
 export interface VisualState {

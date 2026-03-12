@@ -5,7 +5,7 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 import { useCodeRunner, type SupportedLanguage } from "@/hooks/useCodeRunner";
 import CodeEditor from "@/components/editor/CodeEditor";
 import ArenaHeader from "./ArenaHeader";
-import ConsoleOutput from "../../components/ConsoleOutput";
+import ConsoleOutput from "../../components/console/ConsoleOutput";
 import IncomingDiffModal from "@/components/editor/IncomingDiffModal";
 import {
     DEFAULT_JS_CODE,
@@ -18,7 +18,7 @@ import {
     getCurrentLanguage,
     setCurrentLanguage,
 } from "@/lib/storage";
-import { ArenaVisualizer } from "@/components/warehouse/ArenaVisualizer";
+import { WarehouseVisualizer } from "@/components/warehouse/WarehouseVisualizer";
 import { SplitPane, Pane } from "react-split-pane";
 
 export default function ArenaPage() {
@@ -360,7 +360,7 @@ export default function ArenaPage() {
                                             : "")
                                     }
                                 >
-                                    <ArenaVisualizer
+                                    <WarehouseVisualizer
                                         events={
                                             runnerState.warehouseEvents as unknown as import("@/components/warehouse/types").WarehouseEventPayload[]
                                         }
