@@ -120,8 +120,13 @@ export class WSClient {
     start(token: string) {
         this.explicitlyStopped = false;
         this.token = token;
-        // If already connected to the same token, do nothing.
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
+        // If already connected or connecting to the same token, do nothing.
+        if (
+            this.ws &&
+            (this.ws.readyState === WebSocket.OPEN ||
+                this.ws.readyState === WebSocket.CONNECTING)
+        )
+            return;
         // Clear any pending reconnect timer
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
@@ -189,15 +194,27 @@ export class WSClient {
             // Nothing to do until we have a token
             return;
         }
+        // Avoid creating multiple simultaneous WebSocket instances
+        if (
+            this.ws &&
+            (this.ws.readyState === WebSocket.OPEN ||
+                this.ws.readyState === WebSocket.CONNECTING)
+        ) {
+            return;
+        }
         const wsUrl = this.resolveUrl();
         const urlWithToken = `${wsUrl}?token=${encodeURIComponent(this.token)}`;
         try {
             this.emitter.emit("connecting");
             const ws = new WebSocket(urlWithToken);
+            // assign socket reference immediately so subsequent `start()`/`connect()`
+            // calls see a CONNECTING socket and avoid creating duplicates
+            this.ws = ws;
 
             ws.onopen = () => {
                 this.reconnectAttempts = 0;
                 this.clearReconnectTimer();
+                // ensure reference points to the opened socket
                 this.ws = ws;
                 this.emitter.emit("connected");
             };
@@ -292,13 +309,16 @@ export class WSClient {
                     return;
                 }
 
-                // Otherwise, schedule reconnect
+                // Otherwise, schedule reconnect with backoff
                 this.ws = null;
                 this.emitter.emit("disconnected");
 
                 this.reconnectAttempts = (this.reconnectAttempts || 0) + 1;
                 const attempt = this.reconnectAttempts;
                 const backoff = Math.min(10000, 1000 * 2 ** (attempt - 1)); // 1s,2s,4s,... cap 10s
+                console.debug(
+                    `[WSClient] onclose: unexpected close code=${ev.code} reason=${ev.reason} attempt=${attempt} backoff=${backoff}ms`,
+                );
 
                 if (this.reconnectTimer) {
                     clearTimeout(this.reconnectTimer);
@@ -316,6 +336,7 @@ export class WSClient {
 
             ws.onerror = (err) => {
                 // onerror is informational; onclose handles reconnect. Still emit for visibility.
+                console.error("WSClient: socket error", err);
                 this.emitter.emit("error", err);
             };
         } catch (err) {
@@ -328,7 +349,10 @@ export class WSClient {
             if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
             this.reconnectTimer = window.setTimeout(() => {
                 this.reconnectTimer = null;
-                if (!this.explicitlyStopped && this.token) this.connect();
+                if (!this.explicitlyStopped && this.token) {
+                    console.debug("[WSClient] retrying connect after error");
+                    this.connect();
+                }
             }, backoff);
         }
     }
