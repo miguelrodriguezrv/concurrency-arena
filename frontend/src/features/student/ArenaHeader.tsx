@@ -11,9 +11,12 @@ import {
     Moon,
     PanelRightOpen,
     PanelRightClose,
+    BookOpen,
 } from "lucide-react";
+import RulesModal from "@/components/RulesModal";
 import type { SupportedLanguage, RunnerState } from "@/hooks/useCodeRunner";
 import { useStore } from "@/store";
+import { useState } from "react";
 
 interface ArenaHeaderProps {
     name: string;
@@ -50,6 +53,11 @@ export default function ArenaHeader({
         const next = theme === "vs-dark" ? "vs" : "vs-dark";
         setTheme(next);
     };
+
+    const [rulesOpen, setRulesOpen] = useState(false);
+
+    const openRules = () => setRulesOpen(true);
+    const closeRules = () => setRulesOpen(false);
 
     return (
         <header className="h-14 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between px-4 lg:px-6 z-10 shrink-0">
@@ -106,6 +114,15 @@ export default function ArenaHeader({
             </div>
 
             <div className="flex items-center gap-3">
+                {/* Rules button */}
+                <button
+                    onClick={openRules}
+                    className="flex items-center gap-2 px-3 py-1 rounded-md bg-zinc-900 border border-zinc-800 hover:bg-zinc-800"
+                    title="Rules"
+                >
+                    <BookOpen size={16} className="text-zinc-300" />
+                    <span className="text-sm text-zinc-300 hidden sm:inline font-sans">Rules</span>
+                </button>
                 {/* Language Selector */}
                 <div className="relative flex items-center bg-zinc-900 border border-zinc-800 rounded-md overflow-hidden hover:border-zinc-700 transition-colors">
                     <div className="pl-3 text-zinc-500">
@@ -189,6 +206,7 @@ export default function ArenaHeader({
                     <LogOut size={16} />
                 </button>
             </div>
+            <RulesModal open={rulesOpen} onClose={closeRules} />
         </header>
     );
 }
