@@ -1,3 +1,5 @@
+import simpleGoWorkerExample from "../../editor/examples/go/simple_go_worker_example.go?raw";
+
 export const DEFAULT_JS_CODE = `// Challenge: Process 100 tasks as fast as possible.
 // Use API.processTask(id) to simulate work.
 
@@ -16,30 +18,7 @@ async function run() {
 
 await run();`;
 
-export const DEFAULT_GO_CODE = `package main
-
-import (
-    "sync"
-    "fmt"
-)
-
-func main() {
-    fmt.Println("Starting Go Concurrency Challenge...")
-
-    var wg sync.WaitGroup
-    for i := 0; i < 100; i++ {
-        wg.Add(1)
-        go func(id int) {
-            defer wg.Done()
-            // This calls the internal engine bridge (Yaegi -> WASM -> JS)
-            API_ProcessTask(id)
-        }(i)
-    }
-    wg.Wait()
-    fmt.Println("All Go tasks complete!")
-}
-
-  `;
+export const DEFAULT_GO_CODE = simpleGoWorkerExample;
 
 export const DEFAULT_PYTHON_CODE = `import asyncio
 from arena import API

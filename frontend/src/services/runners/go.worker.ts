@@ -19,7 +19,6 @@ declare const Go: {
 declare const self: Worker & {
     importScripts(...urls: string[]): void;
     runGoSource(code: string): Promise<boolean>;
-    runGoTask(_taskId: string): Promise<boolean>;
 };
 
 const postEvent = (event: RunnerEvent) => {
@@ -49,9 +48,6 @@ const setupGoConsoleProxy = () => {
 };
 
 let goInstance: GoInstance | null = null;
-let throughput = 0;
-let activeTasks = 0;
-let peakConcurrency = 0;
 
 const initGoWasm = async () => {
     if (goInstance) return;
@@ -80,26 +76,6 @@ const initGoWasm = async () => {
             goInstance.importObject,
         );
 
-        // Define runGoTask on self so the Go WASM engine can call back into JS
-        // to update metrics and simulate I/O delay.
-        self.runGoTask = async (_taskId: string) => {
-            activeTasks++;
-            if (activeTasks > peakConcurrency) peakConcurrency = activeTasks;
-
-            // Simulate typical network/IO latency (e.g., 50ms)
-            await new Promise((resolve) => setTimeout(resolve, 50));
-
-            throughput++;
-            activeTasks--;
-
-            postEvent({
-                type: "METRIC_UPDATE",
-                payload: { throughput, collisions: 0 },
-            });
-
-            return true;
-        };
-
         // Start the Go runtime in the background
         void goInstance.run(result.instance);
 
@@ -114,11 +90,6 @@ const initGoWasm = async () => {
 
 const runGoCode = async (code: string) => {
     try {
-        // Reset metrics for the new run
-        throughput = 0;
-        activeTasks = 0;
-        peakConcurrency = 0;
-
         await initGoWasm();
 
         postEvent({
@@ -133,7 +104,7 @@ const runGoCode = async (code: string) => {
 
         postEvent({
             type: "STDOUT",
-            payload: `\n[System] Run finished. Peak concurrency: ${peakConcurrency}`,
+            payload: `\n[System] Run finished`,
         });
 
         postEvent({ type: "RUN_COMPLETE" });
@@ -175,16 +146,47 @@ self.addEventListener("message", async (e: MessageEvent<RunnerCommand>) => {
                     const createWarehouse = mod.createWarehouse;
                     const runDeck = Array.isArray(deck) ? deck : undefined;
                     warehouseInstance = createWarehouse(runDeck);
+
+                    // Expose to the Go WASM runtime via global self
+                    (self as any).__warehouse = warehouseInstance;
+
                     if (
                         warehouseInstance &&
                         typeof warehouseInstance.onEvent === "function"
                     ) {
-                        warehouseUnsub = warehouseInstance.onEvent((ev) => {
-                            postEvent({
-                                type: "WAREHOUSE_EVENT",
-                                payload: ev,
-                            });
-                        }) as any;
+                        warehouseUnsub = warehouseInstance.onEvent(
+                            (ev: any) => {
+                                postEvent({
+                                    type: "WAREHOUSE_EVENT",
+                                    payload: ev,
+                                });
+                                try {
+                                    if (ev && ev.type !== "HEARTBEAT") {
+                                        const pid =
+                                            ev.packageId !== undefined
+                                                ? String(ev.packageId)
+                                                : "-";
+                                        const meta = ev.metadata
+                                            ? ` ${JSON.stringify(ev.metadata)}`
+                                            : "";
+                                        const msg = `[Warehouse] ${ev.type} pkg=${pid} ${meta}`;
+                                        if (ev.type === "ERROR") {
+                                            postEvent({
+                                                type: "STDERR",
+                                                payload: msg,
+                                            });
+                                        } else {
+                                            postEvent({
+                                                type: "STDOUT",
+                                                payload: msg,
+                                            });
+                                        }
+                                    }
+                                } catch {
+                                    // Ignore formatting problems
+                                }
+                            },
+                        ) as any;
                     }
                 }
             } catch {
@@ -201,6 +203,7 @@ self.addEventListener("message", async (e: MessageEvent<RunnerCommand>) => {
                 // ignore
             }
             try {
+                delete (self as any).__warehouse; // Cleanup global
                 if (
                     warehouseInstance &&
                     typeof warehouseInstance.dispose === "function"
