@@ -185,7 +185,15 @@ export class WSClient {
             return "ws://localhost:8080/api/ws";
         }
 
+        const isDev = import.meta.env.DEV;
         const proto = window.location.protocol === "https:" ? "wss" : "ws";
+
+        if (isDev) {
+            // In dev, use the vite proxy configured at /ws
+            return `${proto}://${window.location.host}/ws`;
+        }
+
+        // In prod, use the same host:port (where the go app is served)
         return `${proto}://${window.location.host}/api/ws`;
     }
 
