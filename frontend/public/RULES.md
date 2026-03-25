@@ -1,6 +1,6 @@
 # Concurrency Arena — Rules
 
-Welcome to the Concurrency Arena. Your goal is to empty the trucks by moving every package
+Your goal is to empty the trucks by moving every package
 through the warehouse pipeline correctly and as quickly as possible. The rules below explain
 what you are allowed to do, why the constraints exist, and recommended patterns to build a
 robust solution.
