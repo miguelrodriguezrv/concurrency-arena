@@ -1,4 +1,30 @@
-import type { RunnerEvent, RunnerCommand, StartRunPayload } from "./bridge";
+import type { 
+    RunnerEvent, 
+    RunnerCommand, 
+    StartRunPayload, 
+    GetCompletionsPayload, 
+    CompletionsResultPayload,
+    GetHoverPayload,
+    HoverResultPayload,
+    GetDiagnosticsPayload,
+    DiagnosticsResultPayload,
+    GetSignaturesPayload,
+    SignaturesResultPayload
+} from "./bridge";
+
+// Import Python assets as raw strings
+// @ts-ignore - Vite handled raw imports
+import setupScript from "./python/setup.py?raw";
+// @ts-ignore
+import warehouseStubs from "./python/warehouse.pyi?raw";
+// @ts-ignore
+import completionsScript from "./python/completions.py?raw";
+// @ts-ignore
+import hoverScript from "./python/hover.py?raw";
+// @ts-ignore
+import diagnosticsScript from "./python/diagnostics.py?raw";
+// @ts-ignore
+import signaturesScript from "./python/signatures.py?raw";
 
 /**
  * This Web Worker hosts the Pyodide (Python WASM) runtime.
@@ -12,6 +38,9 @@ interface PyodideInterface {
     registerJsModule(name: string, module: any): void;
     setStdout(options: { batched: (str: string) => void }): void;
     setStderr(options: { batched: (str: string) => void }): void;
+    checkFeatures(): void;
+    FS: any;
+    globals: any;
 }
 
 declare const loadPyodide: (options: {
@@ -31,10 +60,7 @@ const initPyodide = async () => {
     if (pyodide) return;
 
     try {
-        // In Module Workers (Vite's default), importScripts is disallowed.
-        // We fetch the pyodide loader and eval it to initialize the global loadPyodide function.
-        const pyodideUrl =
-            "https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js";
+        const pyodideUrl = "https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js";
         const response = await fetch(pyodideUrl);
         if (!response.ok) throw new Error("Failed to fetch pyodide.js");
         const script = await response.text();
@@ -50,7 +76,6 @@ const initPyodide = async () => {
             indexURL: "https://cdn.jsdelivr.net/pyodide/v0.29.3/full/",
         });
 
-        // Intercept Python's stdout/stderr and pipe them to our UI
         pyodide.setStdout({
             batched: (str: string) => {
                 postEvent({ type: "STDOUT", payload: str });
@@ -63,127 +88,91 @@ const initPyodide = async () => {
             },
         });
 
-        // Define the Arena API bridge
+        // Pre-load micropip and jedi for completions
+        try {
+            console.log("Loading jedi via loadPackage...");
+            await pyodide.loadPackage(["micropip", "jedi"]);
+            console.log("Jedi loaded successfully.");
+        } catch (loadErr) {
+            console.warn("Failed to load jedi package via loadPackage, attempting micropip.install", loadErr);
+            await pyodide.runPythonAsync(`
+                import micropip
+                await micropip.install("jedi")
+            `);
+        }
+        
+        // Initial setup from external script
+        await pyodide.runPythonAsync(setupScript);
+        
+        // Run setup functions
+        // Since setup is an 'async def', we need to await it
+        await pyodide.runPythonAsync("await setup()");
+        
+        // Register the bridge as a Python module: 'from arena import API'
         const arenaAPI = {
             process_task: async (_taskId: any) => {
                 activeTasks++;
-                if (activeTasks > peakConcurrency)
-                    peakConcurrency = activeTasks;
-
-                // Simulate I/O delay (50ms)
+                if (activeTasks > peakConcurrency) peakConcurrency = activeTasks;
                 await new Promise((resolve) => setTimeout(resolve, 50));
-
                 throughput++;
                 activeTasks--;
-
-                postEvent({
-                    type: "METRIC_UPDATE",
-                    payload: { throughput, collisions: 0 },
-                });
-
+                postEvent({ type: "METRIC_UPDATE", payload: { throughput, collisions: 0 } });
                 return true;
             },
         };
-
-        // Register the bridge as a Python module: 'from arena import API'
         pyodide.registerJsModule("arena", { API: arenaAPI });
+
     } catch (err) {
-        throw new Error(
-            `Python (Pyodide) initialization failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        throw new Error(`Python (Pyodide) initialization failed: ${err instanceof Error ? err.message : String(err)}`);
     }
 };
 
 const runPythonCode = async (code: string, deck?: unknown) => {
     try {
-        // Reset metrics for the new run
         throughput = 0;
         activeTasks = 0;
         peakConcurrency = 0;
 
         await initPyodide();
 
-        postEvent({
-            type: "STDOUT",
-            payload: "[System] Initializing Python (Pyodide) runtime...",
-        });
+        postEvent({ type: "STDOUT", payload: "[System] Starting Python run..." });
 
-        // Attempt to wire a JS Warehouse runtime if available in this worker environment.
-        // This is optional and non-fatal: if resolution/import fails, we proceed.
         let warehouseInstance: any = null;
         let warehouseUnsub: (() => void) | null = null;
         try {
-            const tryImport = async (p: string) =>
-                await import(p).catch(() => null);
-            const mod =
-                (await tryImport("/src/lib/warehouse/warehouse.js")) ||
-                (await tryImport("/src/lib/warehouse/warehouse"));
+            const tryImport = async (p: string) => await import(p).catch(() => null);
+            const mod = (await tryImport("/src/lib/warehouse/warehouse.js")) || (await tryImport("/src/lib/warehouse/warehouse"));
             if (mod && typeof mod.createWarehouse === "function") {
                 const createWarehouse = mod.createWarehouse;
-                const runDeck = Array.isArray(deck) ? (deck as any) : undefined;
-                warehouseInstance = createWarehouse(runDeck);
-                if (
-                    warehouseInstance &&
-                    typeof warehouseInstance.onEvent === "function"
-                ) {
-                    warehouseUnsub = warehouseInstance.onEvent(
-                        (ev: unknown) => {
-                            postEvent({ type: "WAREHOUSE_EVENT", payload: ev });
-                        },
-                    ) as any;
+                warehouseInstance = createWarehouse(Array.isArray(deck) ? deck : undefined);
+                if (warehouseInstance && typeof warehouseInstance.onEvent === "function") {
+                    warehouseUnsub = warehouseInstance.onEvent((ev: any) => {
+                        postEvent({ type: "WAREHOUSE_EVENT", payload: ev });
+                        try {
+                            if (ev && ev.type !== "HEARTBEAT") {
+                                const pid = ev.packageId !== undefined ? String(ev.packageId) : "-";
+                                const meta = ev.metadata ? ` ${JSON.stringify(ev.metadata)}` : "";
+                                const msg = `[Warehouse] ${ev.type} pkg=${pid}${meta}`;
+                                postEvent({ type: ev.type === "ERROR" ? "STDERR" : "STDOUT", payload: msg });
+                            }
+                        } catch {}
+                    }) as any;
                 }
-
-                // If pyodide is available, register the warehouse instance as a JS module
-                // so Python students can `import warehouse` (best-effort).
                 try {
-                    (pyodide as any).registerJsModule &&
-                        (pyodide as any).registerJsModule(
-                            "warehouse",
-                            warehouseInstance,
-                        );
-                } catch (e) {
-                    // ignore registration failures
-                }
+                    pyodide!.registerJsModule("warehouse", warehouseInstance);
+                } catch {}
             }
-        } catch (e) {
-            // Non-fatal: continue without warehouse instrumentation
-        }
+        } catch {}
 
-        // Run the student's Python code (supports top-level await)
         await pyodide!.runPythonAsync(code);
-
-        postEvent({
-            type: "STDOUT",
-            payload: `\n[System] Python Run finished. Peak concurrency: ${peakConcurrency}`,
-        });
-
-        // Give the runtime a short moment to flush warehouse events if any
+        postEvent({ type: "STDOUT", payload: `\n[System] Python Run finished. Peak concurrency: ${peakConcurrency}` });
         await new Promise((r) => setTimeout(r, 10));
-
         postEvent({ type: "RUN_COMPLETE" });
 
-        // Cleanup any warehouse wiring
-        try {
-            if (warehouseUnsub) warehouseUnsub();
-        } catch (e) {
-            // ignore
-        }
-        try {
-            if (
-                warehouseInstance &&
-                typeof warehouseInstance.dispose === "function"
-            ) {
-                warehouseInstance.dispose();
-            }
-        } catch (e) {
-            // ignore
-        }
+        try { if (warehouseUnsub) warehouseUnsub(); } catch {}
+        try { if (warehouseInstance?.dispose) warehouseInstance.dispose(); } catch {}
     } catch (error) {
-        // Pyodide errors can be complex objects; we stringify them for the UI
-        postEvent({
-            type: "RUN_ERROR",
-            payload: String(error),
-        });
+        postEvent({ type: "RUN_ERROR", payload: String(error) });
     }
 };
 
@@ -192,14 +181,81 @@ self.onmessage = async (e: MessageEvent<RunnerCommand>) => {
 
     switch (type) {
         case "START_RUN": {
-            const { code, deck } = payload as StartRunPayload & {
-                deck?: unknown;
-            };
+            const { code, deck } = payload as StartRunPayload;
             await runPythonCode(code, deck);
+            break;
+        }
+        case "GET_COMPLETIONS": {
+            const { code, line, column, requestId } = payload as GetCompletionsPayload;
+            await initPyodide();
+            
+            // Inject the completions logic if not present
+            if (!pyodide!.globals.has("get_completions")) {
+                await pyodide!.runPythonAsync(completionsScript);
+            }
+
+            const results = await pyodide!.runPythonAsync(`get_completions(${JSON.stringify(code)}, ${line}, ${column}, ${JSON.stringify(warehouseStubs)})`);
+            const suggestions = results.toJs();
+            
+            postEvent({
+                type: "COMPLETIONS_RESULT",
+                payload: { suggestions, requestId } as CompletionsResultPayload,
+            });
+            break;
+        }
+        case "GET_HOVER": {
+            const { code, line, column, requestId } = payload as GetHoverPayload;
+            await initPyodide();
+
+            // Inject hover logic if not present
+            if (!pyodide!.globals.has("get_hover")) {
+                await pyodide!.runPythonAsync(hoverScript);
+            }
+
+            const results = await pyodide!.runPythonAsync(`get_hover(${JSON.stringify(code)}, ${line}, ${column}, ${JSON.stringify(warehouseStubs)})`);
+            const contents = results.toJs();
+
+            postEvent({
+                type: "HOVER_RESULT",
+                payload: { contents, requestId } as HoverResultPayload,
+            });
+            break;
+        }
+        case "GET_DIAGNOSTICS": {
+            const { code, requestId } = payload as GetDiagnosticsPayload;
+            await initPyodide();
+
+            if (!pyodide!.globals.has("get_diagnostics")) {
+                await pyodide!.runPythonAsync(diagnosticsScript);
+            }
+
+            const results = await pyodide!.runPythonAsync(`get_diagnostics(${JSON.stringify(code)}, ${JSON.stringify(warehouseStubs)})`);
+            const diagnostics = results.toJs();
+
+            postEvent({
+                type: "DIAGNOSTICS_RESULT",
+                payload: { diagnostics, requestId } as DiagnosticsResultPayload,
+            });
+            break;
+        }
+        case "GET_SIGNATURES": {
+            const { code, line, column, requestId } = payload as GetSignaturesPayload;
+            await initPyodide();
+
+            if (!pyodide!.globals.has("get_signatures")) {
+                await pyodide!.runPythonAsync(signaturesScript);
+            }
+
+            const results = await pyodide!.runPythonAsync(`get_signatures(${JSON.stringify(code)}, ${line}, ${column}, ${JSON.stringify(warehouseStubs)})`);
+            const signatures = results.toJs();
+
+            postEvent({
+                type: "SIGNATURES_RESULT",
+                payload: { signatures, requestId } as SignaturesResultPayload,
+            });
             break;
         }
     }
 };
 
-// Signal that the worker script is ready
 postEvent({ type: "RUNNER_READY" });

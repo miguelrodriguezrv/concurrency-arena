@@ -29,6 +29,5 @@ export async function initMonaco(): Promise<void> {
     monaco.languages.typescript.typescriptDefaults.addExtraLib(arenaTypes);
 
     registerGoProviders(monaco);
-    registerPythonProviders(monaco);
     registerPythonJediProvider(monaco);
 }
