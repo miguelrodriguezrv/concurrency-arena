@@ -3,22 +3,18 @@
 # Stage 1: build the frontend static assets using Bun
 FROM oven/bun:latest AS build
 
-# Set working directory
 WORKDIR /app
 
-# Copy package manifests first for better cacheability.
 COPY package.json bun.lockb* ./
-# Install dependencies with Bun
 RUN bun install
 
-# Copy the rest of the source and build
 COPY . .
 RUN bun run build
 
 # Stage 2: serve with nginx
 FROM nginx:1.29-alpine AS runtime
 
-# Remove the default nginx html (optional)
+# Remove the default nginx html
 RUN rm -rf /usr/share/nginx/html/*
 
 # Copy built assets from the build stage into nginx's web root.
@@ -32,12 +28,6 @@ RUN find /usr/share/nginx/html -type f -name '*.wasm' -exec gzip -9 -k {} \;
 # This config should implement SPA fallback and proxying for API routes.
 COPY nginx/default.conf /etc/nginx/conf.d/default.conf
 
-# Expose HTTP
 EXPOSE 80
 
-# Optional: a minimal healthcheck (curl is not available by default in this image)
-# If you need more robust checks, install curl/wget in the image or rely on external health checks.
-# HEALTHCHECK --interval=30s --timeout=5s --start-period=5s CMD wget -q -O /dev/null http://localhost/ || exit 1
-
-# Run nginx in the foreground
 CMD ["nginx", "-g", "daemon off;"]
