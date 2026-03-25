@@ -1,7 +1,6 @@
 import { loader } from "@monaco-editor/react";
 import { registerGoProviders } from "./providers/go";
-import { registerPythonProviders } from "./providers/python";
-import { registerPythonJediProvider } from "./python/pythonCompletions";
+import { registerPythonJediProvider } from "./providers/python";
 import arenaTypes from "./types/arena.d.ts?raw";
 
 let initialized = false;
