@@ -11,6 +11,20 @@ export default defineConfig({
             "@": path.resolve(__dirname, "./src"),
         },
     },
+    assetsInclude: ["**/*.d.ts"],
+    server: {
+        proxy: {
+            "/api": {
+                target: "http://localhost:8080",
+                changeOrigin: true,
+            },
+            "/ws": {
+                target: "ws://localhost:8080",
+                ws: true,
+                rewrite: (path) => path.replace(/^\/ws/, "/api/ws"),
+            },
+        },
+    },
     worker: {
         format: "es",
     },
