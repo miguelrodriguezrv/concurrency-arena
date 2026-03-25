@@ -1,16 +1,16 @@
 import type { Monaco } from "@monaco-editor/react";
 import type { editor, Position } from "monaco-editor";
-import type { 
-    RunnerCommand, 
-    RunnerEvent, 
-    GetCompletionsPayload, 
+import type {
+    RunnerCommand,
+    RunnerEvent,
+    GetCompletionsPayload,
     CompletionsResultPayload,
     GetHoverPayload,
     HoverResultPayload,
     GetDiagnosticsPayload,
     DiagnosticsResultPayload,
     GetSignaturesPayload,
-    SignaturesResultPayload
+    SignaturesResultPayload,
 } from "../../runners/bridge";
 
 let pythonWorker: Worker | null = null;
@@ -21,24 +21,35 @@ function getPythonWorker(): Worker {
         // Separate worker instance for completions to avoid collision with run environment
         pythonWorker = new Worker(
             new URL("../../runners/python.worker.ts", import.meta.url),
-            { type: "module" }
+            { type: "module" },
         );
 
         pythonWorker.onmessage = (e: MessageEvent<RunnerEvent>) => {
             const { type, payload } = e.data;
-            const resTypes = ["COMPLETIONS_RESULT", "HOVER_RESULT", "DIAGNOSTICS_RESULT", "SIGNATURES_RESULT"];
+            const resTypes = [
+                "COMPLETIONS_RESULT",
+                "HOVER_RESULT",
+                "DIAGNOSTICS_RESULT",
+                "SIGNATURES_RESULT",
+            ];
             if (resTypes.includes(type)) {
-                const { requestId } = payload as any;
+                const { requestId } = payload;
                 const resolve = pendingRequests.get(requestId);
                 if (resolve) {
                     if (type === "COMPLETIONS_RESULT") {
-                        resolve((payload as CompletionsResultPayload).suggestions);
+                        resolve(
+                            (payload as CompletionsResultPayload).suggestions,
+                        );
                     } else if (type === "HOVER_RESULT") {
                         resolve((payload as HoverResultPayload).contents);
                     } else if (type === "DIAGNOSTICS_RESULT") {
-                        resolve((payload as DiagnosticsResultPayload).diagnostics);
+                        resolve(
+                            (payload as DiagnosticsResultPayload).diagnostics,
+                        );
                     } else if (type === "SIGNATURES_RESULT") {
-                        resolve((payload as SignaturesResultPayload).signatures);
+                        resolve(
+                            (payload as SignaturesResultPayload).signatures,
+                        );
                     }
                     pendingRequests.delete(requestId);
                 }
@@ -160,7 +171,8 @@ export function registerPythonJediProvider(monaco: Monaco) {
                             insertText =
                                 "await ship(${1:package_id}, ${2:lane})";
                         } else if (s.label === "getShippingLineQueueLength") {
-                            insertText = "getShippingLineQueueLength(${1:lane})";
+                            insertText =
+                                "getShippingLineQueueLength(${1:lane})";
                         }
                     } else {
                         insertText = `${s.label}()`;
@@ -188,7 +200,7 @@ export function registerPythonJediProvider(monaco: Monaco) {
 
     // Register Hover Provider
     monaco.languages.registerHoverProvider("python", {
-        provideHover: async (model, position) => {
+        provideHover: async (model: editor.ITextModel, position: Position) => {
             const worker = getPythonWorker();
             const requestId = Math.random().toString(36).substring(7);
             const code = model.getValue();
@@ -223,25 +235,32 @@ export function registerPythonJediProvider(monaco: Monaco) {
             if (contents.length === 0) return null;
 
             return {
-                contents: contents.map(c => ({
+                contents: contents.map((c) => ({
                     value: c.value,
                     isTrusted: true,
-                    supportHtml: true
+                    supportHtml: true,
                 })),
-                range: model.getWordAtPosition(position) ? {
-                    startLineNumber: position.lineNumber,
-                    startColumn: model.getWordAtPosition(position)!.startColumn,
-                    endLineNumber: position.lineNumber,
-                    endColumn: model.getWordAtPosition(position)!.endColumn,
-                } : undefined
+                range: model.getWordAtPosition(position)
+                    ? {
+                          startLineNumber: position.lineNumber,
+                          startColumn:
+                              model.getWordAtPosition(position)!.startColumn,
+                          endLineNumber: position.lineNumber,
+                          endColumn:
+                              model.getWordAtPosition(position)!.endColumn,
+                      }
+                    : undefined,
             };
-        }
+        },
     });
 
     // Register Signature Help Provider
     monaco.languages.registerSignatureHelpProvider("python", {
         signatureHelpTriggerCharacters: ["(", ","],
-        provideSignatureHelp: async (model, position) => {
+        provideSignatureHelp: async (
+            model: editor.ITextModel,
+            position: Position,
+        ) => {
             const worker = getPythonWorker();
             const requestId = Math.random().toString(36).substring(7);
             const code = model.getValue();
@@ -276,21 +295,29 @@ export function registerPythonJediProvider(monaco: Monaco) {
 
             return {
                 value: {
-                    signatures: signatures.map(s => ({
+                    signatures: signatures.map((s) => ({
                         label: s.label,
-                        documentation: { value: s.documentation || "", isTrusted: true, supportHtml: true },
+                        documentation: {
+                            value: s.documentation || "",
+                            isTrusted: true,
+                            supportHtml: true,
+                        },
                         parameters: s.parameters.map((p: any) => ({
                             label: p.label,
-                            documentation: { value: p.documentation || "", isTrusted: true, supportHtml: true }
+                            documentation: {
+                                value: p.documentation || "",
+                                isTrusted: true,
+                                supportHtml: true,
+                            },
                         })),
-                        activeParameter: s.activeParameter
+                        activeParameter: s.activeParameter,
                     })),
                     activeSignature: 0,
-                    activeParameter: signatures[0].activeParameter
+                    activeParameter: signatures[0].activeParameter,
                 },
-                dispose: () => {}
+                dispose: () => {},
             };
-        }
+        },
     });
 
     // Implementation of a simple background linter using Monaco Markers
@@ -328,18 +355,26 @@ export function registerPythonJediProvider(monaco: Monaco) {
             const diagnostics = (results || []).filter((d: any) => {
                 // Filter out the common "await outside function" error for the top-level asyncio.run/await
                 // because Pyodide allows top-level await in its execution context, but Jedi/compile() might flag it.
-                const isTopLevelAwaitError = d.message?.toLowerCase().includes("await' outside function") || 
-                                            d.message?.toLowerCase().includes("cannot use await at the top level");
+                const isTopLevelAwaitError =
+                    d.message
+                        ?.toLowerCase()
+                        .includes("await' outside function") ||
+                    d.message
+                        ?.toLowerCase()
+                        .includes("cannot use await at the top level");
                 return !isTopLevelAwaitError;
             });
 
-            const markers = diagnostics.map(d => ({
+            const markers = diagnostics.map((d) => ({
                 severity: monaco.MarkerSeverity.Error,
                 message: d.message,
                 startLineNumber: d.line,
                 startColumn: d.column + 1,
                 endLineNumber: d.until_line || d.line,
-                endColumn: (d.until_column !== undefined ? d.until_column + 1 : (d.column + 2)),
+                endColumn:
+                    d.until_column !== undefined
+                        ? d.until_column + 1
+                        : d.column + 2,
             }));
 
             if (model.isDisposed()) return;
@@ -353,7 +388,10 @@ export function registerPythonJediProvider(monaco: Monaco) {
     // Trigger linter on model change
     const registeredModels = new Set<string>();
     const attachLinter = (model: editor.ITextModel) => {
-        if (model.getLanguageId() === "python" && !registeredModels.has(model.id)) {
+        if (
+            model.getLanguageId() === "python" &&
+            !registeredModels.has(model.id)
+        ) {
             registeredModels.add(model.id);
             runLinter(model);
             model.onDidChangeContent(() => runLinter(model));
