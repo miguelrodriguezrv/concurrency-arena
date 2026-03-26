@@ -84,6 +84,14 @@ const mapJediKindToMonaco = (kind: string, monaco: Monaco) => {
     }
 };
 
+/**
+ * Preload the Python (Pyodide + Jedi) environment in the background.
+ */
+export function preloadPythonProviders() {
+    const worker = getPythonWorker();
+    worker.postMessage({ type: "PRELOAD" });
+}
+
 export function registerPythonJediProvider(monaco: Monaco) {
     // Register Completion Provider
     monaco.languages.registerCompletionItemProvider("python", {

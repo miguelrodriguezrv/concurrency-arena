@@ -318,6 +318,10 @@ self.onmessage = async (e: MessageEvent<RunnerCommand>) => {
     const { type, payload } = e.data;
 
     switch (type) {
+        case "PRELOAD": {
+            await initPyodide();
+            break;
+        }
         case "START_RUN": {
             const { code, deck } = payload as StartRunPayload;
             await runPythonCode(code, deck);

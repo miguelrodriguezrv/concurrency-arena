@@ -40,6 +40,14 @@ function getGoWorker(): Worker {
 }
 
 /**
+ * Preload the Go WASM Analyzer in the background.
+ */
+export function preloadGoProviders() {
+    const worker = getGoWorker();
+    worker.postMessage({ type: "PRELOAD" });
+}
+
+/**
  * Basic Go IntelliSense Provider using WASM Analyzer.
  */
 export function registerGoProviders(monaco: Monaco) {

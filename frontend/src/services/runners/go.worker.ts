@@ -152,6 +152,10 @@ self.onmessage = async (e: MessageEvent<RunnerCommand>) => {
 
     try {
         switch (type) {
+            case "PRELOAD": {
+                await initAnalyzerWasm();
+                break;
+            }
             case "START_RUN": {
                 const { code, deck } = payload as StartRunPayload & {
                     deck?: unknown;
