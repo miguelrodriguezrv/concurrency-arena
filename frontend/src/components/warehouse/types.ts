@@ -55,6 +55,8 @@ export interface WarehouseEventPayload {
         atPrinterLine?: number;
         printMs?: number;
         processingMs?: number;
+        fatal?: boolean;
+        message?: string;
     };
 }
 

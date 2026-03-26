@@ -54,10 +54,12 @@ type LocationString =
     | "shipped";
 
 type StatusString =
-    | "unprocessed"
-    | "unloaded"
+    | "on_deck"
+    | "unloading"
+    | "in_intake"
+    | "processing"
     | "processed"
-    | "printed"
+    | "labeled"
     | "shipped";
 
 interface InternalPackage {
@@ -119,11 +121,11 @@ class Warehouse implements WarehouseAPI {
     private shippingRunning: boolean = false;
 
     // Capacity Tracking (Atomic)
-    private pendingIntakeCount = 0;
     private pendingProcessingCounts: number[] = [0, 0, 0];
 
     // Error and Penalty Tracking
     private errorCount = 0;
+    private isHalted = false;
 
     // instrumentation
     private processedCount = 0;
@@ -163,7 +165,7 @@ class Warehouse implements WarehouseAPI {
                     processingTime,
                     targetLane,
                     location: "deck",
-                    status: "unprocessed",
+                    status: "on_deck",
                     lineId: undefined,
                     timestamps: {},
                 };
@@ -180,7 +182,7 @@ class Warehouse implements WarehouseAPI {
                     processingTime,
                     targetLane,
                     location: "deck",
-                    status: "unprocessed",
+                    status: "on_deck",
                     lineId: undefined,
                     timestamps: {},
                 };
@@ -200,29 +202,27 @@ class Warehouse implements WarehouseAPI {
         type: WarehouseEvent["type"],
         payload: Partial<WarehouseEvent> = {},
     ) {
+        if (this.isHalted) return; // Silent discard if already dead
+
         if (type === "ERROR") {
             this.errorCount++;
             if (this.errorCount > MAX_ERRORS) {
+                this.isHalted = true;
                 const fatalMsg = `Excessive errors: ${this.errorCount} (limit ${MAX_ERRORS})`;
                 // Emit one last fatal error then stop processing
                 const ev: WarehouseEvent = {
                     type: "ERROR",
-                    timestamp:
-                        typeof performance !== "undefined"
-                            ? performance.now()
-                            : Date.now(),
+                    timestamp: performance.now(),
                     metadata: { message: fatalMsg, fatal: true },
                 };
                 this.emitter.emit(ev);
-                throw new Error(fatalMsg);
+                this.dispose();
+                return;
             }
         }
         const ev: WarehouseEvent = {
             type,
-            timestamp:
-                typeof performance !== "undefined"
-                    ? performance.now()
-                    : Date.now(),
+            timestamp: performance.now(),
             ...payload,
         };
         try {
@@ -265,9 +265,13 @@ class Warehouse implements WarehouseAPI {
     // ---------- Public API (validator-only) ----------
 
     async unload(): Promise<PackagePublic | null> {
-        // Find the next package that is still on the deck.
+        if (this.isHalted) {
+            throw new Error(`Execution terminated due to excessive errors (${this.errorCount}/${MAX_ERRORS})`);
+        }
+
+        // Find the next package that is still on the deck and not already being unloaded.
         const recordCandidate = Array.from(this.packageRecords.values()).find(
-            (p) => p.location === "deck",
+            (p) => p.status === "on_deck",
         );
         if (!recordCandidate) return null;
 
@@ -281,6 +285,7 @@ class Warehouse implements WarehouseAPI {
             const msg = `unload: intake concurrency exceeded (${INTAKE_CONCURRENCY})`;
             this.emit("ERROR", { metadata: { message: msg } });
             await delay(TRANSIENT_PENALTY_MS);
+            throw new Error(msg);
         }
 
         if (intakeOnBelt + this.activeUnloaders >= INTAKE_CAPACITY) {
@@ -292,13 +297,18 @@ class Warehouse implements WarehouseAPI {
                 },
             });
             await delay(TRANSIENT_PENALTY_MS);
+            throw new Error(msg);
         }
 
         const pkgId = recordCandidate.id;
+        const rec = this.packageRecords.get(pkgId)!;
+        
+        // Mark as unloading to prevent duplicate selection
+        rec.status = "unloading";
         this.activeUnloaders++;
+        
         if (!this.firstUnloadTimestamp)
-            this.firstUnloadTimestamp =
-                performance.now();
+            this.firstUnloadTimestamp = performance.now();
 
         // Simulate unload
         this.emit("INTAKE_START", {
@@ -307,11 +317,11 @@ class Warehouse implements WarehouseAPI {
         });
         try {
             await delay(UNLOAD_MS);
+            if (this.isHalted) return null;
 
             // Update package to intake
-            const rec = this.packageRecords.get(pkgId)!;
             rec.location = "intake";
-            rec.status = "unloaded";
+            rec.status = "in_intake";
             rec.timestamps.unloadedAt = performance.now();
 
             // compute intake queue length after placing this package on the belt
@@ -330,7 +340,11 @@ class Warehouse implements WarehouseAPI {
             };
             return publicPkg;
         } catch (err) {
-            this.emit("ERROR", { metadata: { message: String(err) } });
+            // Revert status if unload failed (unless halted)
+            if (!this.isHalted) {
+                rec.status = "on_deck";
+                this.emit("ERROR", { metadata: { message: String(err) } });
+            }
             throw err;
         } finally {
             this.activeUnloaders = Math.max(0, this.activeUnloaders - 1);
@@ -341,6 +355,9 @@ class Warehouse implements WarehouseAPI {
         packageId: number,
         processingLineId: ProcessingLineId,
     ): Promise<void> {
+        if (this.isHalted) {
+            throw new Error(`Execution terminated due to excessive errors (${this.errorCount}/${MAX_ERRORS})`);
+        }
         // Basic validations
         const rec = this.packageRecords.get(packageId);
         if (!rec) {
@@ -360,8 +377,8 @@ class Warehouse implements WarehouseAPI {
             throw new Error(msg);
         }
         // Validate location/status
-        if (!(rec.location === "intake" && rec.status === "unloaded")) {
-            const msg = `pushToProcessingLine: package ${packageId} not in intake/unloaded state (location=${rec.location} status=${rec.status})`;
+        if (!(rec.location === "intake" && rec.status === "in_intake")) {
+            const msg = `pushToProcessingLine: package ${packageId} not in intake state (location=${rec.location} status=${rec.status})`;
             this.emit("ERROR", {
                 packageId,
                 processingLineId,
@@ -381,7 +398,7 @@ class Warehouse implements WarehouseAPI {
                 metadata: { message: msg, queueLength: queue.length, pending },
             });
             await delay(TRANSIENT_PENALTY_MS);
-            return; // Failed to push
+            throw new Error(msg); // Throw after penalty delay
         }
 
         // Reserve slot
@@ -395,6 +412,8 @@ class Warehouse implements WarehouseAPI {
         });
         try {
             await delay(PUSH_MS);
+            if (this.isHalted) return;
+
             // enqueued - atomically transition from pending to actual queue
             queue.push(packageId);
             rec.location =
@@ -407,11 +426,13 @@ class Warehouse implements WarehouseAPI {
                 metadata: { queueLengthAfter: queue.length, pushMs: PUSH_MS },
             });
         } catch (err) {
-            this.emit("ERROR", {
-                packageId,
-                processingLineId,
-                metadata: { message: String(err) },
-            });
+            if (!this.isHalted) {
+                this.emit("ERROR", {
+                    packageId,
+                    processingLineId,
+                    metadata: { message: String(err) },
+                });
+            }
             throw err;
         } finally {
             this.pendingProcessingCounts[processingLineId] = Math.max(
@@ -425,6 +446,9 @@ class Warehouse implements WarehouseAPI {
         packageId: number,
         processingLineId: ProcessingLineId,
     ): Promise<void> {
+        if (this.isHalted) {
+            throw new Error(`Execution terminated due to excessive errors (${this.errorCount}/${MAX_ERRORS})`);
+        }
         const rec = this.packageRecords.get(packageId);
         if (!rec) {
             const msg = `process: unknown package ${packageId}`;
@@ -452,15 +476,15 @@ class Warehouse implements WarehouseAPI {
             throw new Error(msg);
         }
 
-        // status check - can only process unprocessed packages
-        if (rec.status !== "unloaded") {
-             const msg = `process: package ${packageId} is already ${rec.status}`;
+        // status check - can only process packages that were pushed to line
+        if (rec.status !== "in_intake") {
+             const msg = `process: package ${packageId} is in state: ${rec.status}`;
              this.emit("ERROR", {
                  packageId,
                  processingLineId,
                  metadata: { message: msg },
              });
-             return;
+             throw new Error(msg);
         }
 
         // station busy check
@@ -472,14 +496,16 @@ class Warehouse implements WarehouseAPI {
                 metadata: { message: msg },
             });
             await delay(RESOURCE_PENALTY_MS);
-            return;
+            throw new Error(msg);
         }
 
         // Acquire station (validator-only: we just set busy)
         this.processingBusy[processingLineId] = true;
 
         // update rec to processing status
-        rec.status = "unprocessed"; // transition to intermediate
+        // Use a temporary status to indicate in-progress
+        const originalStatus = rec.status;
+        rec.status = "processing"; 
         rec.timestamps.processingStartedAt = performance.now();
 
         this.emit("PROCESS_START", {
@@ -490,6 +516,10 @@ class Warehouse implements WarehouseAPI {
 
         try {
             await delay(rec.processingTime);
+            if (this.isHalted) {
+                rec.status = originalStatus;
+                return;
+            }
 
             rec.status = "processed";
 
@@ -499,11 +529,14 @@ class Warehouse implements WarehouseAPI {
                 metadata: { processingMs: rec.processingTime },
             });
         } catch (err) {
-            this.emit("ERROR", {
-                packageId,
-                processingLineId,
-                metadata: { message: String(err) },
-            });
+            if (!this.isHalted) {
+                rec.status = originalStatus;
+                this.emit("ERROR", {
+                    packageId,
+                    processingLineId,
+                    metadata: { message: String(err) },
+                });
+            }
             throw err;
         } finally {
             this.processingBusy[processingLineId] = false;
@@ -514,6 +547,9 @@ class Warehouse implements WarehouseAPI {
         packageId: number,
         processingLineId: ProcessingLineId,
     ): Promise<ShippingLine> {
+        if (this.isHalted) {
+            throw new Error(`Execution terminated due to excessive errors (${this.errorCount}/${MAX_ERRORS})`);
+        }
         const rec = this.packageRecords.get(packageId);
         if (!rec) {
             const msg = `print: unknown package ${packageId}`;
@@ -583,6 +619,7 @@ class Warehouse implements WarehouseAPI {
             // move (simulate travel) if needed
             if (travelPenalty > 0) {
                 await delay(travelPenalty);
+                if (this.isHalted) throw new Error("Warehouse Halted");
             }
             this.printerPosition = processingLineId;
             this.emit("PRINTER_MOVE_DONE", {
@@ -605,13 +642,11 @@ class Warehouse implements WarehouseAPI {
                 },
             });
             await delay(PRINT_BASE_MS);
+            if (this.isHalted) throw new Error("Warehouse Halted");
 
             // set private status and return target lane
-            rec.status = "printed";
-            rec.timestamps.printedAt =
-                typeof performance !== "undefined"
-                    ? performance.now()
-                    : Date.now();
+            rec.status = "labeled";
+            rec.timestamps.printedAt = performance.now();
 
             const lane = rec.targetLane;
             this.emit("PRINT_SUCCESS", {
@@ -627,11 +662,13 @@ class Warehouse implements WarehouseAPI {
 
             return lane;
         } catch (err) {
-            this.emit("ERROR", {
-                packageId,
-                processingLineId,
-                metadata: { message: String(err) },
-            });
+            if (!this.isHalted) {
+                this.emit("ERROR", {
+                    packageId,
+                    processingLineId,
+                    metadata: { message: String(err) },
+                });
+            }
             throw err;
         } finally {
             this.printerBusy = false;
@@ -639,6 +676,9 @@ class Warehouse implements WarehouseAPI {
     }
 
     async ship(packageId: number, shippingLine: ShippingLine): Promise<void> {
+        if (this.isHalted) {
+            throw new Error(`Execution terminated due to excessive errors (${this.errorCount}/${MAX_ERRORS})`);
+        }
         const rec = this.packageRecords.get(packageId);
         if (!rec) {
             const msg = `ship: unknown package ${packageId}`;
@@ -646,9 +686,9 @@ class Warehouse implements WarehouseAPI {
             throw new Error(msg);
         }
 
-        // Validate printed and handshake
-        if (rec.status !== "printed") {
-            const msg = `ship: package ${packageId} not printed (status=${rec.status})`;
+        // Validate labeled and handshake
+        if (rec.status !== "labeled") {
+            const msg = `ship: package ${packageId} is in state: ${rec.status} (expected labeled)`;
             this.emit("ERROR", { packageId, metadata: { message: msg } });
             throw new Error(msg);
         }
@@ -700,12 +740,13 @@ class Warehouse implements WarehouseAPI {
                 metadata: { message: msg, queueLength: queue.length },
             });
             await delay(TRANSIENT_PENALTY_MS);
-            return;
+            throw new Error(msg); // Throw after penalty delay
         }
 
         // enqueue quickly and return
         try {
             await delay(SHIP_ENQUEUE_MS);
+            if (this.isHalted) return;
 
             // Shift from processing queue ONLY NOW
             procQueue.shift();
@@ -728,11 +769,13 @@ class Warehouse implements WarehouseAPI {
             });
             return;
         } catch (err) {
-            this.emit("ERROR", {
-                packageId,
-                shippingLine,
-                metadata: { message: String(err) },
-            });
+            if (!this.isHalted) {
+                this.emit("ERROR", {
+                    packageId,
+                    shippingLine,
+                    metadata: { message: String(err) },
+                });
+            }
             throw err;
         }
     }
@@ -763,7 +806,7 @@ class Warehouse implements WarehouseAPI {
     private startShippingProcessors() {
         this.shippingRunning = true;
         const schedule = async (line: ShippingLine) => {
-            while (this.shippingRunning) {
+            while (this.shippingRunning && !this.isHalted) {
                 const q = this.shippingQueues[line];
                 if (!q || q.length === 0) {
                     await delay(50);
@@ -781,22 +824,16 @@ class Warehouse implements WarehouseAPI {
                 });
                 try {
                     await delay(SHIP_REMOVE_INTERVAL_MS);
-                    if (!this.shippingRunning) return;
+                    if (!this.shippingRunning || this.isHalted) return;
                     // mark shipped
                     const rec = this.packageRecords.get(packageId);
                     if (rec) {
                         rec.status = "shipped";
                         rec.location = "shipped";
-                        rec.timestamps.shippedAt =
-                            typeof performance !== "undefined"
-                                ? performance.now()
-                                : Date.now();
+                        rec.timestamps.shippedAt = performance.now();
                     }
                     this.processedCount++;
-                    this.lastShipTimestamp =
-                        typeof performance !== "undefined"
-                            ? performance.now()
-                            : Date.now();
+                    this.lastShipTimestamp = performance.now();
                     this.emit("SHIP_COMPLETE", {
                         packageId,
                         shippingLine: line,
@@ -806,7 +843,7 @@ class Warehouse implements WarehouseAPI {
                         },
                     });
                 } catch (err) {
-                    if (!this.shippingRunning) return;
+                    if (!this.shippingRunning || this.isHalted) return;
                     this.emit("ERROR", {
                         packageId,
                         shippingLine: line,
@@ -829,6 +866,10 @@ class Warehouse implements WarehouseAPI {
     private startHeartbeat() {
         if (this.heartbeatTimer) return;
         this.heartbeatTimer = setInterval(() => {
+            if (this.isHalted) {
+                this.stopHeartbeat();
+                return;
+            }
             this.emit("HEARTBEAT", {});
         }, 500);
     }

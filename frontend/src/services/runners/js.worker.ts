@@ -120,7 +120,26 @@ const executeCode = async (code: string, deck?: PackagePublic[]) => {
         const runner = new AsyncFunction("API", "warehouse", code);
 
         // Run student code with both arguments
-        await runner(API, warehouse);
+        try {
+            await runner(API, warehouse);
+        } catch (error) {
+            // Check if this is our special excessive errors message
+            const isExcessiveErrors = error instanceof Error && error.message.includes("excessive errors");
+            
+            postEvent({
+                type: "RUN_ERROR",
+                payload: error instanceof Error ? error.message : String(error),
+            });
+
+            if (isExcessiveErrors) {
+                // Stop the heartbeat and shipping processors immediately
+                warehouse.dispose?.();
+                // We return here to avoid double-reporting RUN_COMPLETE or logs
+                return;
+            }
+            // Re-throw to be caught by the outer catch
+            throw error;
+        }
 
         postEvent({
             type: "STDOUT",
