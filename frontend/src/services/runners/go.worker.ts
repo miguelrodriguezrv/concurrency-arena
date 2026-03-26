@@ -1,3 +1,4 @@
+import { createWarehouse } from "@/lib/warehouse/warehouse";
 import type { RunnerEvent, RunnerCommand, StartRunPayload } from "./bridge";
 
 // wasm_exec.js helper for the Go Worker
@@ -158,25 +159,20 @@ self.onmessage = async (e: MessageEvent<RunnerCommand>) => {
                 setupGoConsoleProxy();
 
                 let warehouseUnsub: (() => void) | null = null;
-                let warehouseInstance = null;
+                let warehouseInstance: any = null;
                 try {
-                    const mod =
-                        (await import("@/lib/warehouse/warehouse").catch(
-                            () => null,
-                        )) || null;
-                    if (mod && typeof mod.createWarehouse === "function") {
-                        const createWarehouse = mod.createWarehouse;
-                        const runDeck = Array.isArray(deck) ? deck : undefined;
-                        warehouseInstance = createWarehouse(runDeck);
+                    const runDeck = Array.isArray(deck) ? deck : undefined;
+                    warehouseInstance = createWarehouse(runDeck);
 
-                        // Expose to the Go WASM runtime via global self
-                        self.__warehouse = warehouseInstance;
+                    // Expose to the Go WASM runtime via global self
+                    (self as any).__warehouse = warehouseInstance;
 
-                        if (
-                            warehouseInstance &&
-                            typeof warehouseInstance.onEvent === "function"
-                        ) {
-                            warehouseUnsub = warehouseInstance.onEvent((ev) => {
+                    if (
+                        warehouseInstance &&
+                        typeof warehouseInstance.onEvent === "function"
+                    ) {
+                        warehouseUnsub = warehouseInstance.onEvent(
+                            (ev: any) => {
                                 postEvent({
                                     type: "WAREHOUSE_EVENT",
                                     payload: ev,
@@ -206,8 +202,8 @@ self.onmessage = async (e: MessageEvent<RunnerCommand>) => {
                                 } catch {
                                     // ignore
                                 }
-                            }) as any;
-                        }
+                            },
+                        ) as any;
                     }
                 } catch {
                     // ignore

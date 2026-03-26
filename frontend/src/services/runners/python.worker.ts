@@ -1,3 +1,4 @@
+import { createWarehouse } from "@/lib/warehouse/warehouse";
 import type {
     RunnerEvent,
     RunnerCommand,
@@ -152,52 +153,42 @@ const runPythonCode = async (code: string, deck?: unknown) => {
         let warehouseInstance: any = null;
         let warehouseUnsub: (() => void) | null = null;
         try {
-            const tryImport = async (p: string) =>
-                await import(p).catch(() => null);
-            const mod =
-                (await tryImport("/src/lib/warehouse/warehouse.js")) ||
-                (await tryImport("/src/lib/warehouse/warehouse"));
-            if (mod && typeof mod.createWarehouse === "function") {
-                const createWarehouse = mod.createWarehouse;
-                warehouseInstance = createWarehouse(
-                    Array.isArray(deck) ? deck : undefined,
-                );
-                if (
-                    warehouseInstance &&
-                    typeof warehouseInstance.onEvent === "function"
-                ) {
-                    warehouseUnsub = warehouseInstance.onEvent((ev: any) => {
-                        postEvent({ type: "WAREHOUSE_EVENT", payload: ev });
-                        try {
-                            if (ev && ev.type !== "HEARTBEAT") {
-                                const pid =
-                                    ev.packageId !== undefined
-                                        ? String(ev.packageId)
-                                        : "-";
-                                const meta = ev.metadata
-                                    ? ` ${JSON.stringify(ev.metadata)}`
-                                    : "";
-                                const msg = `[Warehouse] ${ev.type} pkg=${pid}${meta}`;
-                                postEvent({
-                                    type:
-                                        ev.type === "ERROR"
-                                            ? "STDERR"
-                                            : "STDOUT",
-                                    payload: msg,
-                                });
-                            }
-                        } catch {}
-                    }) as any;
-                }
-                try {
-                    // Register the JS instance under a private name first
-                    // We'll then wrap it in a real Python module for better type support
-                    pyodide!.registerJsModule("_js_warehouse", warehouseInstance);
-                    
-                    // Create a real 'warehouse' module in the Python filesystem
-                    // This allows 'from warehouse import Warehouse' and ': warehouse.Warehouse' to work
-                    // and provides the module-level functions that students expect.
-                    await pyodide!.runPythonAsync(`
+            warehouseInstance = createWarehouse(
+                Array.isArray(deck) ? deck : undefined,
+            );
+            if (
+                warehouseInstance &&
+                typeof warehouseInstance.onEvent === "function"
+            ) {
+                warehouseUnsub = warehouseInstance.onEvent((ev: any) => {
+                    postEvent({ type: "WAREHOUSE_EVENT", payload: ev });
+                    try {
+                        if (ev && ev.type !== "HEARTBEAT") {
+                            const pid =
+                                ev.packageId !== undefined
+                                    ? String(ev.packageId)
+                                    : "-";
+                            const meta = ev.metadata
+                                ? ` ${JSON.stringify(ev.metadata)}`
+                                : "";
+                            const msg = `[Warehouse] ${ev.type} pkg=${pid}${meta}`;
+                            postEvent({
+                                type: ev.type === "ERROR" ? "STDERR" : "STDOUT",
+                                payload: msg,
+                            });
+                        }
+                    } catch {}
+                }) as any;
+            }
+            try {
+                // Register the JS instance under a private name first
+                // We'll then wrap it in a real Python module for better type support
+                pyodide!.registerJsModule("_js_warehouse", warehouseInstance);
+
+                // Create a real 'warehouse' module in the Python filesystem
+                // This allows 'from warehouse import Warehouse' and ': warehouse.Warehouse' to work
+                // and provides the module-level functions that students expect.
+                await pyodide!.runPythonAsync(`
 import sys
 import types
 import _js_warehouse
@@ -217,7 +208,7 @@ class Package:
 
 class Warehouse:
     """The Warehouse API provides methods to interact with the logistics system."""
-    
+
     async def unload(self) -> Package:
         """Unloads the next package from the intake belt. Returns None if empty."""
         pass
@@ -245,7 +236,7 @@ class Warehouse:
 # Map the JS instance methods to the module and the Warehouse class
 # This allows both 'warehouse.unload()' and 'Warehouse.unload(w)' to work.
 methods = [
-    "unload", "pushToProcessingLine", "processPackage", 
+    "unload", "pushToProcessingLine", "processPackage",
     "print", "ship", "getShippingLineQueueLength"
 ]
 
@@ -262,11 +253,12 @@ warehouse.Package = Package
 # Inject into sys.modules so 'import warehouse' works
 sys.modules["warehouse"] = warehouse
                     `);
-                } catch (e) {
-                    console.error("Failed to initialize warehouse module:", e);
-                }
+            } catch (e) {
+                console.error("Failed to initialize warehouse module:", e);
             }
-        } catch {}
+        } catch (e) {
+            console.error("Warehouse setup error:", e);
+        }
 
         // Set the user code in globals and execute it
         await pyodide!.runPythonAsync(code);
@@ -281,7 +273,7 @@ import warehouse
 async def invoke_entrypoint():
     # Find the warehouse instance (either the module or the injected bridge)
     wh_obj = warehouse
-    
+
     # Check for run(w) first
     if "run" in globals() and callable(globals()["run"]):
         func = globals()["run"]
@@ -292,7 +284,7 @@ async def invoke_entrypoint():
             if inspect.isawaitable(res):
                 await res
             return
-    
+
     # Fallback to main()
     if "main" in globals() and callable(globals()["main"]):
         print("[System] Calling main()...")
