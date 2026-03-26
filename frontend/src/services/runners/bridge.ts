@@ -13,6 +13,7 @@ export type RunnerEventType =
     | "COMPLETIONS_RESULT"
     | "HOVER_RESULT"
     | "DIAGNOSTICS_RESULT"
+    | "SIGNATURE_HELP_RESULT"
     | "SIGNATURES_RESULT";
 
 export interface RunnerEvent {
@@ -29,7 +30,14 @@ export interface MetricUpdatePayload {
 /**
  * Commands sent FROM the main thread TO the worker thread.
  */
-export type RunnerCommandType = "START_RUN" | "STOP_RUN" | "GET_COMPLETIONS" | "GET_HOVER" | "GET_DIAGNOSTICS" | "GET_SIGNATURES";
+export type RunnerCommandType =
+    | "START_RUN"
+    | "STOP_RUN"
+    | "GET_COMPLETIONS"
+    | "GET_HOVER"
+    | "GET_DIAGNOSTICS"
+    | "GET_SIGNATURE_HELP"
+    | "GET_SIGNATURES";
 
 export interface RunnerCommand {
     type: RunnerCommandType;
