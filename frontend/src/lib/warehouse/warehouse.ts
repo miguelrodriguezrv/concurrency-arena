@@ -33,6 +33,11 @@ const INTAKE_CAPACITY = 8;
 const PROCESSING_LINE_CAPACITY = 5;
 const SHIPPING_LINE_CAPACITY = 5;
 
+/** Penalties and Error Limits */
+const MAX_ERRORS = 100;
+const TRANSIENT_PENALTY_MS = 2000; // Delay for capacity/concurrency errors
+const RESOURCE_PENALTY_MS = 1000; // Delay for station/printer busy errors
+
 /** Utility delay */
 const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
@@ -43,9 +48,6 @@ type LocationString =
     | "processingLine0"
     | "processingLine1"
     | "processingLine2"
-    | "processingLine0:processing"
-    | "processingLine1:processing"
-    | "processingLine2:processing"
     | "shippingLineNorth"
     | "shippingLineSouth"
     | "shippingLineInternational"
@@ -115,6 +117,13 @@ class Warehouse implements WarehouseAPI {
         International: [],
     };
     private shippingRunning: boolean = false;
+
+    // Capacity Tracking (Atomic)
+    private pendingIntakeCount = 0;
+    private pendingProcessingCounts: number[] = [0, 0, 0];
+
+    // Error and Penalty Tracking
+    private errorCount = 0;
 
     // instrumentation
     private processedCount = 0;
@@ -191,6 +200,23 @@ class Warehouse implements WarehouseAPI {
         type: WarehouseEvent["type"],
         payload: Partial<WarehouseEvent> = {},
     ) {
+        if (type === "ERROR") {
+            this.errorCount++;
+            if (this.errorCount > MAX_ERRORS) {
+                const fatalMsg = `Excessive errors: ${this.errorCount} (limit ${MAX_ERRORS})`;
+                // Emit one last fatal error then stop processing
+                const ev: WarehouseEvent = {
+                    type: "ERROR",
+                    timestamp:
+                        typeof performance !== "undefined"
+                            ? performance.now()
+                            : Date.now(),
+                    metadata: { message: fatalMsg, fatal: true },
+                };
+                this.emitter.emit(ev);
+                throw new Error(fatalMsg);
+            }
+        }
         const ev: WarehouseEvent = {
             type,
             timestamp:
@@ -239,47 +265,40 @@ class Warehouse implements WarehouseAPI {
     // ---------- Public API (validator-only) ----------
 
     async unload(): Promise<PackagePublic | null> {
-        // Validate intake concurrency (simultaneous unloaders) and physical intake capacity.
-        if (this.activeUnloaders >= INTAKE_CONCURRENCY) {
-            const msg = `unload: intake concurrency exceeded (${INTAKE_CONCURRENCY})`;
-            this.emit("ERROR", { metadata: { message: msg } });
-            throw new Error(msg);
-        }
-        // Count packages currently on the intake belt
-        const intakeOnBelt = Array.from(this.packageRecords.values()).filter(
-            (p) => p.location === "intake",
-        ).length;
-        const intakeInFlight = this.activeUnloaders;
-        if (intakeOnBelt + intakeInFlight >= INTAKE_CAPACITY) {
-            const msg = `unload: intake queue full (${INTAKE_CAPACITY})`;
-            this.emit("ERROR", {
-                metadata: {
-                    message: msg,
-                    intakeCount: intakeOnBelt + intakeInFlight,
-                },
-            });
-            throw new Error(msg);
-        }
-
         // Find the next package that is still on the deck.
         const recordCandidate = Array.from(this.packageRecords.values()).find(
             (p) => p.location === "deck",
         );
+        if (!recordCandidate) return null;
 
-        // If there are no remaining packages on the deck, return null (deck exhausted).
-        if (!recordCandidate) {
-            // No ERROR emitted here — it's a normal end-of-deck condition.
-            return null;
+        // Validate intake concurrency (simultaneous unloaders) and physical intake capacity.
+        // Capacity includes: already on belt (intake) + currently being unloaded (activeUnloaders)
+        const intakeOnBelt = Array.from(this.packageRecords.values()).filter(
+            (p) => p.location === "intake",
+        ).length;
+
+        if (this.activeUnloaders >= INTAKE_CONCURRENCY) {
+            const msg = `unload: intake concurrency exceeded (${INTAKE_CONCURRENCY})`;
+            this.emit("ERROR", { metadata: { message: msg } });
+            await delay(TRANSIENT_PENALTY_MS);
+        }
+
+        if (intakeOnBelt + this.activeUnloaders >= INTAKE_CAPACITY) {
+            const msg = `unload: intake queue full (${INTAKE_CAPACITY})`;
+            this.emit("ERROR", {
+                metadata: {
+                    message: msg,
+                    intakeCount: intakeOnBelt + this.activeUnloaders,
+                },
+            });
+            await delay(TRANSIENT_PENALTY_MS);
         }
 
         const pkgId = recordCandidate.id;
-
         this.activeUnloaders++;
         if (!this.firstUnloadTimestamp)
             this.firstUnloadTimestamp =
-                typeof performance !== "undefined"
-                    ? performance.now()
-                    : Date.now();
+                performance.now();
 
         // Simulate unload
         this.emit("INTAKE_START", {
@@ -293,10 +312,7 @@ class Warehouse implements WarehouseAPI {
             const rec = this.packageRecords.get(pkgId)!;
             rec.location = "intake";
             rec.status = "unloaded";
-            rec.timestamps.unloadedAt =
-                typeof performance !== "undefined"
-                    ? performance.now()
-                    : Date.now();
+            rec.timestamps.unloadedAt = performance.now();
 
             // compute intake queue length after placing this package on the belt
             const queueLengthAfter = Array.from(
@@ -353,17 +369,24 @@ class Warehouse implements WarehouseAPI {
             });
             throw new Error(msg);
         }
-        // Check capacity
+
+        // Check capacity (actual in queue + pending pushes)
         const queue = this.processingQueues[processingLineId];
-        if (queue.length >= PROCESSING_LINE_CAPACITY) {
+        const pending = this.pendingProcessingCounts[processingLineId];
+        if (queue.length + pending >= PROCESSING_LINE_CAPACITY) {
             const msg = `pushToProcessingLine: processingLine ${processingLineId} is full (${PROCESSING_LINE_CAPACITY})`;
             this.emit("ERROR", {
                 packageId,
                 processingLineId,
-                metadata: { message: msg, queueLength: queue.length },
+                metadata: { message: msg, queueLength: queue.length, pending },
             });
-            throw new Error(msg);
+            await delay(TRANSIENT_PENALTY_MS);
+            return; // Failed to push
         }
+
+        // Reserve slot
+        this.pendingProcessingCounts[processingLineId]++;
+
         // Simulate induction delay
         this.emit("INDUCTION_START", {
             packageId,
@@ -372,15 +395,12 @@ class Warehouse implements WarehouseAPI {
         });
         try {
             await delay(PUSH_MS);
-            // enqueue
+            // enqueued - atomically transition from pending to actual queue
             queue.push(packageId);
             rec.location =
                 `processingLine${processingLineId}` as LocationString;
             rec.lineId = processingLineId;
-            rec.timestamps.pushedAt =
-                typeof performance !== "undefined"
-                    ? performance.now()
-                    : Date.now();
+            rec.timestamps.pushedAt = performance.now();
             this.emit("INDUCTION_DONE", {
                 packageId,
                 processingLineId,
@@ -393,6 +413,11 @@ class Warehouse implements WarehouseAPI {
                 metadata: { message: String(err) },
             });
             throw err;
+        } finally {
+            this.pendingProcessingCounts[processingLineId] = Math.max(
+                0,
+                this.pendingProcessingCounts[processingLineId] - 1,
+            );
         }
     }
 
@@ -411,14 +436,14 @@ class Warehouse implements WarehouseAPI {
             throw new Error(msg);
         }
 
-        // Validate package is on the requested line and queued
+        // Validate package is on the requested line
         if (
             !(
                 rec.lineId === processingLineId &&
                 rec.location === `processingLine${processingLineId}`
             )
         ) {
-            const msg = `process: package ${packageId} not queued on processingLine ${processingLineId} (location=${rec.location})`;
+            const msg = `process: package ${packageId} not on processingLine ${processingLineId} (location=${rec.location})`;
             this.emit("ERROR", {
                 packageId,
                 processingLineId,
@@ -427,16 +452,15 @@ class Warehouse implements WarehouseAPI {
             throw new Error(msg);
         }
 
-        const queue = this.processingQueues[processingLineId];
-        // head-of-line check
-        if (queue.length === 0 || queue[0] !== packageId) {
-            const msg = `process: package ${packageId} is not at head of processingLine ${processingLineId}`;
-            this.emit("ERROR", {
-                packageId,
-                processingLineId,
-                metadata: { message: msg },
-            });
-            throw new Error(msg);
+        // status check - can only process unprocessed packages
+        if (rec.status !== "unloaded") {
+             const msg = `process: package ${packageId} is already ${rec.status}`;
+             this.emit("ERROR", {
+                 packageId,
+                 processingLineId,
+                 metadata: { message: msg },
+             });
+             return;
         }
 
         // station busy check
@@ -447,19 +471,16 @@ class Warehouse implements WarehouseAPI {
                 processingLineId,
                 metadata: { message: msg },
             });
-            throw new Error(msg);
+            await delay(RESOURCE_PENALTY_MS);
+            return;
         }
 
         // Acquire station (validator-only: we just set busy)
         this.processingBusy[processingLineId] = true;
-        // remove from queue head (since process requires head)
-        queue.shift();
 
-        // update rec to processing location
-        rec.location =
-            `processingLine${processingLineId}:processing` as LocationString;
-        rec.timestamps.processingStartedAt =
-            typeof performance !== "undefined" ? performance.now() : Date.now();
+        // update rec to processing status
+        rec.status = "unprocessed"; // transition to intermediate
+        rec.timestamps.processingStartedAt = performance.now();
 
         this.emit("PROCESS_START", {
             packageId,
@@ -471,9 +492,6 @@ class Warehouse implements WarehouseAPI {
             await delay(rec.processingTime);
 
             rec.status = "processed";
-            // after processing, remain on the same processingLine location (ready for print)
-            rec.location =
-                `processingLine${processingLineId}` as LocationString;
 
             this.emit("PROCESS_DONE", {
                 packageId,
@@ -524,6 +542,18 @@ class Warehouse implements WarehouseAPI {
             throw new Error(msg);
         }
 
+        // Head of line check for printing
+        const queue = this.processingQueues[processingLineId];
+        if (queue.length === 0 || queue[0] !== packageId) {
+             const msg = `print: package ${packageId} is not at head of processingLine ${processingLineId}`;
+             this.emit("ERROR", {
+                 packageId,
+                 processingLineId,
+                 metadata: { message: msg },
+             });
+             throw new Error(msg);
+        }
+
         if (this.printerBusy) {
             const msg = `print: printer busy`;
             this.emit("ERROR", {
@@ -531,6 +561,7 @@ class Warehouse implements WarehouseAPI {
                 processingLineId,
                 metadata: { message: msg },
             });
+            await delay(RESOURCE_PENALTY_MS);
             throw new Error(msg);
         }
 
@@ -631,6 +662,24 @@ class Warehouse implements WarehouseAPI {
             throw new Error(msg);
         }
 
+        // Validate head-of-line on processing line
+        const procLineId = rec.lineId;
+        if (procLineId === undefined) {
+             const msg = `ship: package ${packageId} has no lineId`;
+             this.emit("ERROR", { packageId, metadata: { message: msg } });
+             throw new Error(msg);
+        }
+        const procQueue = this.processingQueues[procLineId];
+        if (procQueue.length === 0 || procQueue[0] !== packageId) {
+             const msg = `ship: package ${packageId} is not at head of processingLine ${procLineId}`;
+             this.emit("ERROR", {
+                 packageId,
+                 processingLineId: procLineId,
+                 metadata: { message: msg },
+             });
+             throw new Error(msg);
+        }
+
         const queue = this.shippingQueues[shippingLine];
         if (!queue) {
             const msg = `ship: unknown shippingLine ${shippingLine}`;
@@ -650,12 +699,16 @@ class Warehouse implements WarehouseAPI {
                 shippingLine,
                 metadata: { message: msg, queueLength: queue.length },
             });
-            throw new Error(msg);
+            await delay(TRANSIENT_PENALTY_MS);
+            return;
         }
 
         // enqueue quickly and return
         try {
             await delay(SHIP_ENQUEUE_MS);
+
+            // Shift from processing queue ONLY NOW
+            procQueue.shift();
 
             queue.push(packageId);
             rec.location =

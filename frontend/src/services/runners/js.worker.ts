@@ -95,7 +95,12 @@ const executeCode = async (code: string, deck?: PackagePublic[]) => {
                         : "";
                     const msg = `[Warehouse] ${ev.type} pkg=${pid} ${meta}`;
                     if (ev.type === "ERROR") {
-                        postEvent({ type: "STDERR", payload: msg });
+                        const isFatal = ev.metadata?.fatal;
+                        postEvent({
+                            type: "STDERR",
+                            payload: `${isFatal ? "[FATAL] " : "[ERROR] "}${msg}`,
+                        });
+                        // If it's a fatal error emitted as an event, we've already thrown in the warehouse
                     } else {
                         postEvent({ type: "STDOUT", payload: msg });
                     }

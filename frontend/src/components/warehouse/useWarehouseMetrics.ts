@@ -4,6 +4,7 @@ import type { WarehouseEventPayload } from "./types";
 export interface WarehouseMetrics {
     shippedCount: number;
     errorCount: number;
+    fatalError: boolean;
     intakeEfficiency: number;
     printerEfficiency: number;
     printerMoveMs: number;
@@ -137,6 +138,7 @@ export default function useWarehouseMetrics(
     const metrics = useMemo<WarehouseMetrics>(() => {
         let shippedCount = 0;
         let errorCount = 0;
+        let fatalError = false;
         let printerMoveMs = 0;
         let printerPrintMs = 0;
         let activeUnloaders = 0;
@@ -157,7 +159,10 @@ export default function useWarehouseMetrics(
 
             // 2. Update state based on event type
             if (ev.type === "SHIP_COMPLETE") shippedCount++;
-            if (ev.type === "ERROR") errorCount++;
+            if (ev.type === "ERROR") {
+                errorCount++;
+                if (ev.metadata?.fatal) fatalError = true;
+            }
 
             if (ev.type === "INTAKE_START") {
                 activeUnloaders++;
@@ -197,6 +202,7 @@ export default function useWarehouseMetrics(
         return {
             shippedCount,
             errorCount,
+            fatalError,
             intakeEfficiency,
             printerEfficiency,
             printerMoveMs,

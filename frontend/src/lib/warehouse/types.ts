@@ -33,14 +33,15 @@ export interface WarehouseEvent {
         | "PROCESS_START"
         | "PROCESS_DONE"
         | "PRINT_START"
-        | "PRINT_SUCCESS"
-        | "PRINTER_MOVE_START"
-        | "PRINTER_MOVE_DONE"
-        | "SHIP_ENQUEUED"
-        | "SHIP_START"
-        | "SHIP_COMPLETE"
-        | "ERROR"
-        | "HEARTBEAT";
+    | "PRINT_SUCCESS"
+    | "PRINTER_MOVE_START"
+    | "PRINTER_MOVE_DONE"
+    | "SHIP_ENQUEUED"
+    | "SHIP_START"
+    | "SHIP_COMPLETE"
+    | "PENALTY"
+    | "ERROR"
+    | "HEARTBEAT";
 
     // Optional identifiers to help consumers correlate events
     packageId?: number;

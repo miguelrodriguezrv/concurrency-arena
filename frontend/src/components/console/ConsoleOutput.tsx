@@ -69,21 +69,25 @@ export default function ConsoleOutput({ runnerState }: ConsoleOutputProps) {
                         />
                         <MetricBadge
                             label="Violations"
-                            value={(metrics?.errorCount || 0).toString()}
+                            value={`${metrics?.errorCount || 0}${metrics?.fatalError ? " (FATAL)" : ""}`}
                             icon={
                                 <AlertCircle
                                     size={12}
                                     className={
                                         (metrics?.errorCount || 0) > 0
-                                            ? "text-rose-500"
+                                            ? metrics?.fatalError
+                                                ? "text-rose-600 animate-pulse"
+                                                : "text-rose-500"
                                             : "text-zinc-500"
                                     }
                                 />
                             }
-                            tooltip="Race conditions / Errors"
+                            tooltip={metrics?.fatalError ? "Execution terminated due to excessive errors" : "Race conditions / Errors"}
                             colorClass={
                                 (metrics?.errorCount || 0) > 0
-                                    ? "text-rose-500"
+                                    ? metrics?.fatalError
+                                        ? "text-rose-600 font-bold"
+                                        : "text-rose-500"
                                     : "text-zinc-300"
                             }
                         />
