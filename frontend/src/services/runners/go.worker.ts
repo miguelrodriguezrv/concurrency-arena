@@ -1,5 +1,13 @@
 import { createWarehouse } from "@/lib/warehouse/warehouse";
-import type { RunnerEvent, RunnerCommand, StartRunPayload } from "./bridge";
+import type {
+    RunnerEvent,
+    RunnerCommand,
+    StartRunPayload,
+    GetCompletionsPayload,
+    GetHoverPayload,
+    GetDiagnosticsPayload,
+    GetSignaturesPayload,
+} from "./bridge";
 
 // wasm_exec.js helper for the Go Worker
 import "./go/wasm_exec.js";
@@ -227,7 +235,7 @@ self.onmessage = async (e: MessageEvent<RunnerCommand>) => {
             }
             case "GET_DIAGNOSTICS": {
                 await initAnalyzerWasm();
-                const { code, requestId } = payload as any;
+                const { code, requestId } = payload as GetDiagnosticsPayload;
                 const json = self.getDiagnostics(code);
                 const diagnostics = json ? JSON.parse(json) : [];
                 self.postMessage({
@@ -238,7 +246,7 @@ self.onmessage = async (e: MessageEvent<RunnerCommand>) => {
             }
             case "GET_COMPLETIONS": {
                 await initAnalyzerWasm();
-                const { code, line, column, requestId } = payload as any;
+                const { code, line, column, requestId } = payload as GetCompletionsPayload;
                 const json = self.getCompletions(code, line, column);
                 const suggestions = json ? JSON.parse(json) : [];
                 self.postMessage({
@@ -249,7 +257,7 @@ self.onmessage = async (e: MessageEvent<RunnerCommand>) => {
             }
             case "GET_HOVER": {
                 await initAnalyzerWasm();
-                const { code, line, column, requestId } = payload as any;
+                const { code, line, column, requestId } = payload as GetHoverPayload;
                 const json = self.getHover(code, line, column);
                 const hover = json ? JSON.parse(json) : null;
                 self.postMessage({
@@ -260,7 +268,7 @@ self.onmessage = async (e: MessageEvent<RunnerCommand>) => {
             }
             case "GET_SIGNATURE_HELP": {
                 await initAnalyzerWasm();
-                const { code, line, column, requestId } = payload as any;
+                const { code, line, column, requestId } = payload as GetSignaturesPayload;
                 const json = self.getSignatureHelp(code, line, column);
                 const signatureHelp = json ? JSON.parse(json) : null;
                 self.postMessage({

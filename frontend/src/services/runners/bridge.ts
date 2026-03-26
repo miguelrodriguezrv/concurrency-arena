@@ -31,6 +31,7 @@ export interface MetricUpdatePayload {
  * Commands sent FROM the main thread TO the worker thread.
  */
 export type RunnerCommandType =
+    | "PRELOAD"
     | "START_RUN"
     | "STOP_RUN"
     | "GET_COMPLETIONS"

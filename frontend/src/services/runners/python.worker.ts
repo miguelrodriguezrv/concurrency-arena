@@ -20,6 +20,7 @@ import completionsScript from "./python/completions.py?raw";
 import hoverScript from "./python/hover.py?raw";
 import diagnosticsScript from "./python/diagnostics.py?raw";
 import signaturesScript from "./python/signatures.py?raw";
+import warehouseScript from "./python/warehouse.py?raw";
 
 /**
  * This Web Worker hosts the Pyodide (Python WASM) runtime.
@@ -47,9 +48,6 @@ const postEvent = (event: RunnerEvent) => {
 };
 
 let pyodide: PyodideInterface | null = null;
-let throughput = 0;
-let activeTasks = 0;
-let peakConcurrency = 0;
 
 const initPyodide = async () => {
     if (pyodide) return;
@@ -107,24 +105,6 @@ const initPyodide = async () => {
         // Since setup is an 'async def', we need to await it
         await pyodide.runPythonAsync("await setup()");
 
-        // Register the bridge as a Python module: 'from arena import API'
-        const arenaAPI = {
-            process_task: async (_taskId: any) => {
-                activeTasks++;
-                if (activeTasks > peakConcurrency)
-                    peakConcurrency = activeTasks;
-                await new Promise((resolve) => setTimeout(resolve, 50));
-                throughput++;
-                activeTasks--;
-                postEvent({
-                    type: "METRIC_UPDATE",
-                    payload: { throughput, collisions: 0 },
-                });
-                return true;
-            },
-        };
-        pyodide.registerJsModule("arena", { API: arenaAPI });
-
         // Ensure helper functions are globally available
         await pyodide.runPythonAsync(completionsScript);
         await pyodide.runPythonAsync(hoverScript);
@@ -139,10 +119,6 @@ const initPyodide = async () => {
 
 const runPythonCode = async (code: string, deck?: unknown) => {
     try {
-        throughput = 0;
-        activeTasks = 0;
-        peakConcurrency = 0;
-
         await initPyodide();
 
         postEvent({
@@ -177,7 +153,9 @@ const runPythonCode = async (code: string, deck?: unknown) => {
                                 payload: msg,
                             });
                         }
-                    } catch {}
+                    } catch {
+                        // ignore
+                    }
                 }) as any;
             }
             try {
@@ -188,71 +166,7 @@ const runPythonCode = async (code: string, deck?: unknown) => {
                 // Create a real 'warehouse' module in the Python filesystem
                 // This allows 'from warehouse import Warehouse' and ': warehouse.Warehouse' to work
                 // and provides the module-level functions that students expect.
-                await pyodide!.runPythonAsync(`
-import sys
-import types
-import _js_warehouse
-
-# Create a proper module object
-warehouse = types.ModuleType("warehouse")
-warehouse.__doc__ = "Warehouse Logistics API"
-
-class Package:
-    """A package that needs to be processed and shipped."""
-    id: int
-    processingTime: int
-
-    def __init__(self, id, processing_time):
-        self.id = id
-        self.processingTime = processing_time # Match JS camelCase for compatibility
-
-class Warehouse:
-    """The Warehouse API provides methods to interact with the logistics system."""
-
-    async def unload(self) -> Package:
-        """Unloads the next package from the intake belt. Returns None if empty."""
-        pass
-
-    async def pushToProcessingLine(self, packageId: int, processingLineId: int):
-        """Moves a package onto a processing line (0, 1, or 2)."""
-        pass
-
-    async def processPackage(self, packageId: int, processingLineId: int):
-        """Performs work on a package at the specified processing line (blocking)."""
-        pass
-
-    async def print(self, packageId: int, processingLineId: int) -> str:
-        """Generates a shipping label and returns the assigned shipping lane."""
-        pass
-
-    async def ship(self, packageId: int, shippingLine: str):
-        """Sends a package to the final shipping lane."""
-        pass
-
-    def getShippingLineQueueLength(self, shippingLine: str) -> int:
-        """Returns the number of packages currently waiting in a shipping lane."""
-        pass
-
-# Map the JS instance methods to the module and the Warehouse class
-# This allows both 'warehouse.unload()' and 'Warehouse.unload(w)' to work.
-methods = [
-    "unload", "pushToProcessingLine", "processPackage",
-    "print", "ship", "getShippingLineQueueLength"
-]
-
-for method_name in methods:
-    if hasattr(_js_warehouse, method_name):
-        func = getattr(_js_warehouse, method_name)
-        setattr(warehouse, method_name, func)
-        # Also add to the class for type-hinting support (static-ish mapping)
-        setattr(Warehouse, method_name, func)
-
-warehouse.Warehouse = Warehouse
-warehouse.Package = Package
-
-# Inject into sys.modules so 'import warehouse' works
-sys.modules["warehouse"] = warehouse
-                    `);
+                await pyodide!.runPythonAsync(warehouseScript);
             } catch (e) {
                 console.error("Failed to initialize warehouse module:", e);
             }
@@ -298,17 +212,21 @@ await invoke_entrypoint()
 
         postEvent({
             type: "STDOUT",
-            payload: `\n[System] Python Run finished. Peak concurrency: ${peakConcurrency}`,
+            payload: `\n[System] Python Run finished.`,
         });
         await new Promise((r) => setTimeout(r, 10));
         postEvent({ type: "RUN_COMPLETE" });
 
         try {
             if (warehouseUnsub) warehouseUnsub();
-        } catch {}
+        } catch {
+            // swallow
+        }
         try {
             if (warehouseInstance?.dispose) warehouseInstance.dispose();
-        } catch {}
+        } catch {
+            // swallow
+        }
     } catch (error) {
         postEvent({ type: "RUN_ERROR", payload: String(error) });
     }
