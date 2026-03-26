@@ -159,43 +159,6 @@ export default function ArenaPage() {
         }
     }, [status, code, language, sendMessage]);
 
-    // Listen for server-side state restoration
-    const students = useStore((state) => state.students);
-
-    useEffect(() => {
-        if (!session?.name) return;
-        const student = students[session.name];
-        if (!student) return;
-
-        // Prefer a language-specific code from the server if available, otherwise fall back to
-        // the student's primary `code` field.
-        const serverCode = student.codes?.[language] ?? student.code;
-        if (serverCode === undefined || serverCode === null) return;
-
-        // If it's identical to the current editor contents, do nothing.
-        // Read the current editor contents from the ref so we don't have to include
-        // `code` in the dependency array (which would trigger on every keystroke).
-        if (String(serverCode) === String(codeRef.current)) return;
-
-        // Defer the state update to avoid a synchronous setState inside an effect,
-        // which can cause cascading renders. Using setTimeout(0) schedules the
-        // update after the current render/commit cycle.
-        const timeoutId = window.setTimeout(() => {
-            try {
-                setCodeForLanguage(language, String(serverCode));
-            } catch {
-                // ignore storage errors
-            }
-            setCode(String(serverCode));
-            // keep the ref in sync with the updated state
-            codeRef.current = String(serverCode);
-        }, 0);
-
-        return () => {
-            window.clearTimeout(timeoutId);
-        };
-    }, [students, session?.name, language]);
-
     /**
      * Handle Admin Commands
      *
@@ -398,6 +361,7 @@ export default function ArenaPage() {
                                     )}
                                     <div className="h-full min-h-0">
                                         <CodeEditor
+                                            key={language}
                                             code={code}
                                             language={language}
                                             onChange={handleEditorChange}

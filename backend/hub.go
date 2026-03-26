@@ -11,10 +11,10 @@ import (
 // Using json.RawMessage allows the server to remain a "dumb relay"
 // without needing to know the exact shape of the payload.
 type StudentState struct {
-	Name      string          `json:"name"`
-	Code      json.RawMessage `json:"code"`
-	Metrics   json.RawMessage `json:"metrics"`
-	Connected bool            `json:"connected"`
+	Name      string                     `json:"name"`
+	Codes     map[string]json.RawMessage `json:"codes"` // per-language
+	Connected bool                       `json:"connected"`
+	Metrics   json.RawMessage            `json:"metrics"`
 }
 
 // Session holds authentication information for a connected user.
@@ -159,11 +159,11 @@ func (h *Hub) Run() {
 							SenderID: state.Name,
 							Role:     RoleStudent,
 						}
-						// 2. Send the latest code if available
-						if state.Code != nil {
+						// 2. Send the latest code snippets
+						for _, code := range state.Codes {
 							c.send <- Message{
 								Type:     MsgTypeCodeSync,
-								Payload:  state.Code,
+								Payload:  code,
 								SenderID: state.Name,
 								Role:     RoleStudent,
 							}
@@ -189,16 +189,18 @@ func (h *Hub) Run() {
 					log.Printf("[WS] New Student joined: %s", client.ID)
 					state = &StudentState{
 						Name:      client.ID,
+						Codes:     make(map[string]json.RawMessage),
 						Connected: true,
 					}
 					h.studentStates[client.ID] = state
 				} else {
 					state.Connected = true
 					log.Printf("[WS] Student reconnected: %s (Restoring State)", client.ID)
-					if state.Code != nil {
+					// Send all per-language codes we have on record
+					for _, code := range state.Codes {
 						client.send <- Message{
 							Type:     MsgTypeCodeSync,
-							Payload:  state.Code,
+							Payload:  code,
 							SenderID: state.Name,
 							Role:     RoleStudent,
 						}
@@ -288,7 +290,16 @@ func (h *Hub) handleMessage(msg Message) {
 
 		switch msg.Type {
 		case MsgTypeCodeSync:
-			state.Code = msg.Payload
+			// Parse payload to identify language
+			var p struct {
+				Language string `json:"language"`
+			}
+			if err := json.Unmarshal(msg.Payload, &p); err == nil && p.Language != "" {
+				if state.Codes == nil {
+					state.Codes = make(map[string]json.RawMessage)
+				}
+				state.Codes[p.Language] = msg.Payload
+			}
 		case MsgTypeMetricPulse:
 			state.Metrics = msg.Payload
 		}

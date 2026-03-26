@@ -120,16 +120,16 @@ export const useStore = create<AppState>((set, get) => ({
         set((state) => {
             const student = state.students[name];
             const codes = { ...student.codes };
-            let finalCode = "";
+            let finalCode = student.code;
             let finalLanguage = student.language;
 
             if (typeof codeOrPayload === "string") {
+                // If it's a bare string, we don't know the language.
+                // We keep it in the primary 'code' field for UI compatibility.
                 finalCode = codeOrPayload;
             } else {
                 finalCode = codeOrPayload.code;
-                // record the per-language snapshot
                 codes[codeOrPayload.language] = codeOrPayload.code;
-                // update the student's active language
                 finalLanguage = codeOrPayload.language;
             }
 
