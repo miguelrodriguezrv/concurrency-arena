@@ -123,6 +123,12 @@ const initPyodide = async () => {
             },
         };
         pyodide.registerJsModule("arena", { API: arenaAPI });
+
+        // Ensure helper functions are globally available
+        await pyodide.runPythonAsync(completionsScript);
+        await pyodide.runPythonAsync(hoverScript);
+        await pyodide.runPythonAsync(diagnosticsScript);
+        await pyodide.runPythonAsync(signaturesScript);
     } catch (err) {
         throw new Error(
             `Python (Pyodide) initialization failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -184,12 +190,120 @@ const runPythonCode = async (code: string, deck?: unknown) => {
                     }) as any;
                 }
                 try {
-                    pyodide!.registerJsModule("warehouse", warehouseInstance);
-                } catch {}
+                    // Register the JS instance under a private name first
+                    // We'll then wrap it in a real Python module for better type support
+                    pyodide!.registerJsModule("_js_warehouse", warehouseInstance);
+                    
+                    // Create a real 'warehouse' module in the Python filesystem
+                    // This allows 'from warehouse import Warehouse' and ': warehouse.Warehouse' to work
+                    // and provides the module-level functions that students expect.
+                    await pyodide!.runPythonAsync(`
+import sys
+import types
+import _js_warehouse
+
+# Create a proper module object
+warehouse = types.ModuleType("warehouse")
+warehouse.__doc__ = "Warehouse Logistics API"
+
+class Package:
+    """A package that needs to be processed and shipped."""
+    id: int
+    processingTime: int
+
+    def __init__(self, id, processing_time):
+        self.id = id
+        self.processingTime = processing_time # Match JS camelCase for compatibility
+
+class Warehouse:
+    """The Warehouse API provides methods to interact with the logistics system."""
+    
+    async def unload(self) -> Package:
+        """Unloads the next package from the intake belt. Returns None if empty."""
+        pass
+
+    async def pushToProcessingLine(self, packageId: int, processingLineId: int):
+        """Moves a package onto a processing line (0, 1, or 2)."""
+        pass
+
+    async def processPackage(self, packageId: int, processingLineId: int):
+        """Performs work on a package at the specified processing line (blocking)."""
+        pass
+
+    async def print(self, packageId: int, processingLineId: int) -> str:
+        """Generates a shipping label and returns the assigned shipping lane."""
+        pass
+
+    async def ship(self, packageId: int, shippingLine: str):
+        """Sends a package to the final shipping lane."""
+        pass
+
+    def getShippingLineQueueLength(self, shippingLine: str) -> int:
+        """Returns the number of packages currently waiting in a shipping lane."""
+        pass
+
+# Map the JS instance methods to the module and the Warehouse class
+# This allows both 'warehouse.unload()' and 'Warehouse.unload(w)' to work.
+methods = [
+    "unload", "pushToProcessingLine", "processPackage", 
+    "print", "ship", "getShippingLineQueueLength"
+]
+
+for method_name in methods:
+    if hasattr(_js_warehouse, method_name):
+        func = getattr(_js_warehouse, method_name)
+        setattr(warehouse, method_name, func)
+        # Also add to the class for type-hinting support (static-ish mapping)
+        setattr(Warehouse, method_name, func)
+
+warehouse.Warehouse = Warehouse
+warehouse.Package = Package
+
+# Inject into sys.modules so 'import warehouse' works
+sys.modules["warehouse"] = warehouse
+                    `);
+                } catch (e) {
+                    console.error("Failed to initialize warehouse module:", e);
+                }
             }
         } catch {}
 
+        // Set the user code in globals and execute it
         await pyodide!.runPythonAsync(code);
+
+        // Call run(warehouse) if it exists, otherwise call main()
+        // We use a separate string for the invocation to ensure warehouse is in the locals/globals
+        await pyodide!.runPythonAsync(`
+import inspect
+import asyncio
+import warehouse
+
+async def invoke_entrypoint():
+    # Find the warehouse instance (either the module or the injected bridge)
+    wh_obj = warehouse
+    
+    # Check for run(w) first
+    if "run" in globals() and callable(globals()["run"]):
+        func = globals()["run"]
+        params = inspect.signature(func).parameters
+        if len(params) == 1:
+            print("[System] Calling run(warehouse)...")
+            res = func(wh_obj)
+            if inspect.isawaitable(res):
+                await res
+            return
+    
+    # Fallback to main()
+    if "main" in globals() and callable(globals()["main"]):
+        print("[System] Calling main()...")
+        res = globals()["main"]()
+        if inspect.isawaitable(res):
+            await res
+        return
+
+await invoke_entrypoint()
+        `);
+
         postEvent({
             type: "STDOUT",
             payload: `\n[System] Python Run finished. Peak concurrency: ${peakConcurrency}`,
@@ -222,13 +336,10 @@ self.onmessage = async (e: MessageEvent<RunnerCommand>) => {
                 payload as GetCompletionsPayload;
             await initPyodide();
 
-            // Inject the completions logic if not present
-            if (!pyodide!.globals.has("get_completions")) {
-                await pyodide!.runPythonAsync(completionsScript);
-            }
-
+            const codeString = JSON.stringify(code);
+            const stubsString = JSON.stringify(warehouseStubs);
             const results = await pyodide!.runPythonAsync(
-                `get_completions(${JSON.stringify(code)}, ${line}, ${column}, ${JSON.stringify(warehouseStubs)})`,
+                `get_completions(${codeString}, ${line}, ${column}, ${stubsString})`,
             );
             const suggestions = results.toJs();
 
@@ -243,13 +354,10 @@ self.onmessage = async (e: MessageEvent<RunnerCommand>) => {
                 payload as GetHoverPayload;
             await initPyodide();
 
-            // Inject hover logic if not present
-            if (!pyodide!.globals.has("get_hover")) {
-                await pyodide!.runPythonAsync(hoverScript);
-            }
-
+            const codeString = JSON.stringify(code);
+            const stubsString = JSON.stringify(warehouseStubs);
             const results = await pyodide!.runPythonAsync(
-                `get_hover(${JSON.stringify(code)}, ${line}, ${column}, ${JSON.stringify(warehouseStubs)})`,
+                `get_hover(${codeString}, ${line}, ${column}, ${stubsString})`,
             );
             const contents = results.toJs();
 
@@ -263,12 +371,10 @@ self.onmessage = async (e: MessageEvent<RunnerCommand>) => {
             const { code, requestId } = payload as GetDiagnosticsPayload;
             await initPyodide();
 
-            if (!pyodide!.globals.has("get_diagnostics")) {
-                await pyodide!.runPythonAsync(diagnosticsScript);
-            }
-
+            const codeString = JSON.stringify(code);
+            const stubsString = JSON.stringify(warehouseStubs);
             const results = await pyodide!.runPythonAsync(
-                `get_diagnostics(${JSON.stringify(code)}, ${JSON.stringify(warehouseStubs)})`,
+                `get_diagnostics(${codeString}, ${stubsString})`,
             );
             const diagnostics = results.toJs();
 
@@ -283,12 +389,10 @@ self.onmessage = async (e: MessageEvent<RunnerCommand>) => {
                 payload as GetSignaturesPayload;
             await initPyodide();
 
-            if (!pyodide!.globals.has("get_signatures")) {
-                await pyodide!.runPythonAsync(signaturesScript);
-            }
-
+            const codeString = JSON.stringify(code);
+            const stubsString = JSON.stringify(warehouseStubs);
             const results = await pyodide!.runPythonAsync(
-                `get_signatures(${JSON.stringify(code)}, ${line}, ${column}, ${JSON.stringify(warehouseStubs)})`,
+                `get_signatures(${codeString}, ${line}, ${column}, ${stubsString})`,
             );
             const signatures = results.toJs();
 

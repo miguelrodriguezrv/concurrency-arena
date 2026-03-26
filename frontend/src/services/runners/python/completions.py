@@ -7,9 +7,13 @@ def get_completions(code, line, column, stubs_content):
     if not os.path.exists('/stubs'):
         os.makedirs('/stubs')
 
-    # Ensure stubs are up to date
+    # Create both .py and .pyi to ensure Jedi has both type info and runtime-like visibility
     with open('/stubs/warehouse.pyi', 'w') as f:
         f.write(stubs_content)
+    
+    # Simple .py version for better discovery
+    with open('/stubs/warehouse.py', 'w') as f:
+        f.write(stubs_content.replace('...', 'pass'))
 
     project = jedi.Project(
         path='/',

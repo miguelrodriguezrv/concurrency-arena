@@ -47,6 +47,14 @@ type Parameter struct {
 	Doc   string `json:"documentation"`
 }
 
+type SemanticToken struct {
+	Line   int `json:"line"`
+	Start  int `json:"start"`
+	Length int `json:"length"`
+	Type   int `json:"type"`
+	Mod    int `json:"mod"`
+}
+
 func main() {
 	c := make(chan struct{})
 
@@ -54,6 +62,7 @@ func main() {
 	js.Global().Set("getCompletions", js.FuncOf(getCompletions))
 	js.Global().Set("getHover", js.FuncOf(getHover))
 	js.Global().Set("getSignatureHelp", js.FuncOf(getSignatureHelp))
+	js.Global().Set("getSemanticTokens", js.FuncOf(getSemanticTokens))
 
 	fmt.Println("Go Analyzer WASM (Concurrency Master) Initialized")
 	<-c
@@ -120,12 +129,15 @@ type Package struct {
 	ID             int
 	ProcessingTime int
 }
-func Unload() (*Package, error) { return nil, nil }
-func PushToProcessingLine(id int, line int) error { return nil }
-func ProcessPackage(id int, line int) error { return nil }
-func Print(id int, line int) (string, error) { return "", nil }
-func Ship(id int, lane string) error { return nil }
-func GetShippingLineQueueLength(lane string) int { return 0 }
+
+type Warehouse interface {
+	Unload() (*Package, error)
+	PushToProcessingLine(packageId int, processingLineId int) error
+	ProcessPackage(packageId int, processingLineId int) error
+	Print(packageId int, processingLineId int) (string, error)
+	Ship(packageId int, shippingLine string) error
+	GetShippingLineQueueLength(shippingLine string) int
+}
 `
 
 // CustomArenaImporter is a pure-virtual importer that provides high-fidelity mocks
@@ -208,21 +220,9 @@ func typeCheck(fset *token.FileSet, code string) (*ast.File, *types.Info, error)
 	arenaImporter := NewArenaImporter(fset)
 
 	mainPkg := types.NewPackage("main", "main")
-	scope := mainPkg.Scope()
 
-	// Inject Warehouse API into the main scope (no import needed)
-	if whPkg, err := arenaImporter.Import("warehouse"); err == nil {
-		whScope := whPkg.Scope()
-		for _, name := range whScope.Names() {
-			obj := whScope.Lookup(name)
-			if scope.Lookup(name) == nil {
-				scope.Insert(obj)
-			}
-		}
-	}
-
-	// We MUST NOT manually insert PkgName objects before the checker runs if we want to avoid collisions.
-	// Instead, we let the Importer handle the discovery during Checker.Files.
+	// We MUST NOT manually insert anything into the scope here if we want to avoid collisions.
+	// The checker will handle everything from the source code.
 
 	conf := types.Config{
 		Importer: arenaImporter,
@@ -245,7 +245,7 @@ func getDiagnostics(this js.Value, args []js.Value) any {
 	fset := token.NewFileSet()
 	var diagnostics []Diagnostic
 
-	_, _, err := typeCheck(fset, code)
+	f, _, err := typeCheck(fset, code)
 	if err != nil {
 		if errList, ok := err.(scanner.ErrorList); ok {
 			for _, e := range errList {
@@ -258,6 +258,25 @@ func getDiagnostics(this js.Value, args []js.Value) any {
 			// Catch any other errors
 			diagnostics = append(diagnostics, Diagnostic{Line: 1, Column: 1, Message: err.Error()})
 		}
+	}
+
+	// Proactive Yaegi Compatibility Check: Range over Int (Go 1.22)
+	// Yaegi v0.16.1 (WASM) panics on 'for i := range 10'
+	if f != nil {
+		ast.Inspect(f, func(n ast.Node) bool {
+			if rs, ok := n.(*ast.RangeStmt); ok {
+				// Detect literal int: for i := range 10
+				if lit, ok := rs.X.(*ast.BasicLit); ok && lit.Kind == token.INT {
+					pos := fset.Position(rs.Pos())
+					diagnostics = append(diagnostics, Diagnostic{
+						Line:    pos.Line,
+						Column:  pos.Column,
+						Message: "Yaegi (browser Go engine) does not support 'range over int'. Please use 'for i := 0; i < N; i++'.",
+					})
+				}
+			}
+			return true
+		})
 	}
 
 	result, _ := json.Marshal(diagnostics)
@@ -561,6 +580,91 @@ func getSignatureHelp(this js.Value, args []js.Value) any {
 	}
 
 	return js.Null()
+}
+
+func getSemanticTokens(this js.Value, args []js.Value) any {
+	code := args[0].String()
+	fset := token.NewFileSet()
+	f, info, _ := typeCheck(fset, code)
+	if f == nil || info == nil {
+		return js.ValueOf("[]")
+	}
+
+	var tokens []SemanticToken
+
+	// Token types (Monaco indices)
+	// 0: namespace, 1: type, 2: class, 3: enum, 4: interface, 5: struct, 6: typeParameter, 7: parameter, 8: variable, 9: property, 10: enumMember, 11: event, 12: function, 13: method, 14: macro, 15: keyword, 16: modifier, 17: comment, 18: string, 19: number, 20: regexp, 21: operator
+	const (
+		TokenTypeNamespace = 0
+		TokenTypeType      = 1
+		TokenTypeInterface = 4
+		TokenTypeStruct    = 5
+		TokenTypeParameter = 7
+		TokenTypeVariable  = 8
+		TokenTypeProperty  = 9
+		TokenTypeFunction  = 12
+		TokenTypeMethod    = 13
+	)
+
+	ast.Inspect(f, func(n ast.Node) bool {
+		ident, ok := n.(*ast.Ident)
+		if !ok {
+			return true
+		}
+
+		obj := info.Uses[ident]
+		if obj == nil {
+			obj = info.Defs[ident]
+		}
+		if obj == nil {
+			return true
+		}
+
+		pos := fset.Position(ident.Pos())
+		token := SemanticToken{
+			Line:   pos.Line - 1,
+			Start:  pos.Column - 1,
+			Length: len(ident.Name),
+			Type:   -1,
+		}
+
+		switch o := obj.(type) {
+		case *types.PkgName:
+			token.Type = TokenTypeNamespace
+		case *types.TypeName:
+			if _, ok := o.Type().Underlying().(*types.Interface); ok {
+				token.Type = TokenTypeInterface
+			} else if _, ok := o.Type().Underlying().(*types.Struct); ok {
+				token.Type = TokenTypeStruct
+			} else {
+				token.Type = TokenTypeType
+			}
+		case *types.Var:
+			if o.IsField() {
+				token.Type = TokenTypeProperty
+			} else {
+				token.Type = TokenTypeVariable
+			}
+		case *types.Func:
+			sig := o.Type().(*types.Signature)
+			if sig.Recv() != nil {
+				token.Type = TokenTypeMethod
+			} else {
+				token.Type = TokenTypeFunction
+			}
+		case *types.Const:
+			token.Type = TokenTypeVariable // Monaco doesn't have a great 'const' type by default, enumMember?
+		}
+
+		if token.Type != -1 {
+			tokens = append(tokens, token)
+		}
+
+		return true
+	})
+
+	result, _ := json.Marshal(tokens)
+	return js.ValueOf(string(result))
 }
 
 func findPos(fset *token.FileSet, line, col int) token.Pos {

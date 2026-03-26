@@ -73,7 +73,10 @@ func getWarehouse() js.Value {
 	return js.Global().Get("__warehouse")
 }
 
-func Unload() (*Package, error) {
+// WarehouseManager implements the warehouse.Warehouse interface by calling JS functions.
+type WarehouseManager struct{}
+
+func (w *WarehouseManager) Unload() (*Package, error) {
 	wh := getWarehouse()
 	if !wh.Truthy() {
 		return nil, errors.New("warehouse runtime not available")
@@ -93,7 +96,7 @@ func Unload() (*Package, error) {
 	}, nil
 }
 
-func PushToProcessingLine(packageId int, processingLineId int) error {
+func (w *WarehouseManager) PushToProcessingLine(packageId int, processingLineId int) error {
 	wh := getWarehouse()
 	if !wh.Truthy() {
 		return errors.New("warehouse runtime not available")
@@ -103,7 +106,7 @@ func PushToProcessingLine(packageId int, processingLineId int) error {
 	return err
 }
 
-func ProcessPackage(packageId int, processingLineId int) error {
+func (w *WarehouseManager) ProcessPackage(packageId int, processingLineId int) error {
 	wh := getWarehouse()
 	if !wh.Truthy() {
 		return errors.New("warehouse runtime not available")
@@ -113,7 +116,7 @@ func ProcessPackage(packageId int, processingLineId int) error {
 	return err
 }
 
-func Print(packageId int, processingLineId int) (string, error) {
+func (w *WarehouseManager) Print(packageId int, processingLineId int) (string, error) {
 	wh := getWarehouse()
 	if !wh.Truthy() {
 		return "", errors.New("warehouse runtime not available")
@@ -126,7 +129,7 @@ func Print(packageId int, processingLineId int) (string, error) {
 	return val.String(), nil
 }
 
-func Ship(packageId int, shippingLine string) error {
+func (w *WarehouseManager) Ship(packageId int, shippingLine string) error {
 	wh := getWarehouse()
 	if !wh.Truthy() {
 		return errors.New("warehouse runtime not available")
@@ -136,7 +139,7 @@ func Ship(packageId int, shippingLine string) error {
 	return err
 }
 
-func GetShippingLineQueueLength(shippingLine string) int {
+func (w *WarehouseManager) GetShippingLineQueueLength(shippingLine string) int {
 	wh := getWarehouse()
 	if !wh.Truthy() {
 		return 0
@@ -150,9 +153,32 @@ func main() {
 	// Register the global function that the JS side will call
 	js.Global().Set("runGoSource", js.FuncOf(runGoSource))
 
+	// Signal to JS that the Go runtime is alive and registered runGoSource
+	if signal := js.Global().Get("signalExecutorReady"); signal.Type() == js.TypeFunction {
+		signal.Invoke()
+	}
+
 	// Keep the Go program alive
 	select {}
 }
+
+const warehouseSource = `
+package warehouse
+
+type Package struct {
+	ID             int
+	ProcessingTime int
+}
+
+type Warehouse interface {
+	Unload() (*Package, error)
+	PushToProcessingLine(packageId int, processingLineId int) error
+	ProcessPackage(packageId int, processingLineId int) error
+	Print(packageId int, processingLineId int) (string, error)
+	Ship(packageId int, shippingLine string) error
+	GetShippingLineQueueLength(shippingLine string) int
+}
+`
 
 // runGoSource takes (sourceCode string) and returns a Promise
 func runGoSource(this js.Value, args []js.Value) interface{} {
@@ -167,6 +193,15 @@ func runGoSource(this js.Value, args []js.Value) interface{} {
 		reject := promiseArgs[1]
 
 		go func() {
+			// Handle potential interpreter panics gracefully
+			defer func() {
+				if r := recover(); r != nil {
+					errStr := fmt.Sprintf("Go Interpreter Panic: %v", r)
+					fmt.Fprintln(os.Stderr, errStr)
+					reject.Invoke(errStr)
+				}
+			}()
+
 			// Initialize Yaegi Interpreter
 			i := interp.New(interp.Options{
 				Stdout: os.Stdout,
@@ -180,18 +215,26 @@ func runGoSource(this js.Value, args []js.Value) interface{} {
 			}
 
 			// Define the internal API for the student to use.
-			// To make it available in the 'main' package, we define a custom
-			// symbol map and then use i.Use().
 			apiSymbols := make(map[string]map[string]reflect.Value)
 
-			apiSymbols["warehouse/warehouse"] = map[string]reflect.Value{
-				"Package":                    reflect.ValueOf((*Package)(nil)),
-				"Unload":                     reflect.ValueOf(Unload),
-				"PushToProcessingLine":       reflect.ValueOf(PushToProcessingLine),
-				"ProcessPackage":             reflect.ValueOf(ProcessPackage),
-				"Print":                      reflect.ValueOf(Print),
-				"Ship":                       reflect.ValueOf(Ship),
-				"GetShippingLineQueueLength": reflect.ValueOf(GetShippingLineQueueLength),
+			// Map the Go bridge functions to the interpreter via a raw internal package.
+			// Yaegi requires a "path/name" format for export paths.
+			apiSymbols["warehouse_internal/warehouse_internal"] = map[string]reflect.Value{
+				"UnloadRaw": reflect.ValueOf(func() (int, int, bool, error) {
+					p, err := (&WarehouseManager{}).Unload()
+					if err != nil {
+						return 0, 0, false, err
+					}
+					if p == nil {
+						return 0, 0, false, nil
+					}
+					return p.ID, p.ProcessingTime, true, nil
+				}),
+				"PushToProcessingLine":       reflect.ValueOf((&WarehouseManager{}).PushToProcessingLine),
+				"ProcessPackage":             reflect.ValueOf((&WarehouseManager{}).ProcessPackage),
+				"Print":                      reflect.ValueOf((&WarehouseManager{}).Print),
+				"Ship":                       reflect.ValueOf((&WarehouseManager{}).Ship),
+				"GetShippingLineQueueLength": reflect.ValueOf((&WarehouseManager{}).GetShippingLineQueueLength),
 			}
 
 			if err := i.Use(apiSymbols); err != nil {
@@ -199,17 +242,100 @@ func runGoSource(this js.Value, args []js.Value) interface{} {
 				return
 			}
 
-			_, err := i.Eval(`import . "warehouse"`)
-			if err != nil {
-				// We don't fail hard here either.
+			// 1. Materialize the official 'warehouse' package inside the interpreter.
+			// This package defines the types natively so the interpreter "owns" them.
+			const warehouseBridgeSource = `
+package warehouse
+import "warehouse_internal/warehouse_internal"
+
+type Package struct {
+	ID             int
+	ProcessingTime int
+}
+
+type Warehouse interface {
+	Unload() (*Package, error)
+	PushToProcessingLine(packageId int, processingLineId int) error
+	ProcessPackage(packageId int, processingLineId int) error
+	Print(packageId int, processingLineId int) (string, error)
+	Ship(packageId int, shippingLine string) error
+	GetShippingLineQueueLength(shippingLine string) int
+}
+
+type manager struct{}
+
+func (m *manager) Unload() (*Package, error) {
+	id, time, ok, err := warehouse_internal.UnloadRaw()
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	return &Package{ID: id, ProcessingTime: time}, nil
+}
+
+func (m *manager) PushToProcessingLine(id, line int) error {
+	return warehouse_internal.PushToProcessingLine(id, line)
+}
+
+func (m *manager) ProcessPackage(id, line int) error {
+	return warehouse_internal.ProcessPackage(id, line)
+}
+
+func (m *manager) Print(id, line int) (string, error) {
+	return warehouse_internal.Print(id, line)
+}
+
+func (m *manager) Ship(id int, lane string) error {
+	return warehouse_internal.Ship(id, lane)
+}
+
+func (m *manager) GetShippingLineQueueLength(lane string) int {
+	return warehouse_internal.GetShippingLineQueueLength(lane)
+}
+
+func NewWarehouseManager() Warehouse {
+	return &manager{}
+}
+`
+			if _, err := i.Eval(warehouseBridgeSource); err != nil {
+				reject.Invoke(fmt.Sprintf("Failed to materialize warehouse bridge: %v", err))
+				return
 			}
 
 			// Evaluate the student's code
-			_, err = i.Eval(sourceCode)
+			_, err := i.Eval(sourceCode)
+
 			if err != nil {
 				fmt.Printf("Go Runtime Error: %v\n", err)
 				reject.Invoke(err.Error())
 				return
+			}
+
+			// Look for the Run function and call it if it exists
+			v, err := i.Eval("Run")
+			if err == nil && v.Kind() == reflect.Func {
+				// Call Run with a warehouse.Warehouse interface satisfied by our manager.
+				// First, ensure warehouse is imported at the top level (safe to call multiple times in Yaegi)
+				i.Eval("import \"warehouse\"")
+
+				// Now call Run as a simple expression
+				if _, err = i.Eval("Run(warehouse.NewWarehouseManager())"); err != nil {
+					fmt.Printf("Go Runtime Error in Run(): %v\n", err)
+					reject.Invoke(err.Error())
+					return
+				}
+			} else {
+				// Fallback to calling main
+				v, err = i.Eval("main")
+				if err == nil && v.Kind() == reflect.Func {
+					if _, err = i.Eval("main()"); err != nil {
+						fmt.Printf("Go Runtime Error in main(): %v\n", err)
+						reject.Invoke(err.Error())
+						return
+					}
+				}
 			}
 
 			// Success

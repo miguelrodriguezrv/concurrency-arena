@@ -2,52 +2,40 @@ package main
 
 import (
 	"fmt"
+	"warehouse"
 )
 
-func main() {
-	fmt.Println("Testing Go Warehouse API...")
+// The Run function is the entry point for the Concurrency Arena.
+// The 'w' object (warehouse.Warehouse interface) provides all available methods.
+// This sequential version unloads, processes, and ships one by one.
+// Can you make it concurrent to improve throughput?
+func Run(w warehouse.Warehouse) {
+	fmt.Println("Starting warehouse worker...")
 
-	// 1. Unload a package
-	pkg, err := Unload()
-	if err != nil {
-		fmt.Println("Unload error:", err)
-		return
-	}
-	if pkg == nil {
-		fmt.Println("No packages available")
-		return
-	}
-	fmt.Printf("Unloaded package %d (processing time %dms)\n", pkg.ID, pkg.ProcessingTime)
+	for {
+		// 1. Unload a package
+		pkg, err := w.Unload()
+		if err != nil {
+			fmt.Println("Unload error:", err)
+			break
+		}
+		if pkg == nil {
+			fmt.Println("No more packages to unload. Challenge complete!")
+			break
+		}
+		fmt.Printf("Unloaded package %d\n", pkg.ID)
 
-	// 2. Push it to processing line 0
-	err = PushToProcessingLine(pkg.ID, 0)
-	if err != nil {
-		fmt.Println("Push error:", err)
-		return
-	}
-	fmt.Println("Pushed to processing line 0")
+		// 2. Push to processing line (0, 1, or 2)
+		lineID := pkg.ID % 3
+		w.PushToProcessingLine(pkg.ID, lineID)
 
-	// 3. Process it
-	err = ProcessPackage(pkg.ID, 0)
-	if err != nil {
-		fmt.Println("Process error:", err)
-		return
-	}
-	fmt.Println("Processed package")
+		// 3. Process it (blocking)
+		w.ProcessPackage(pkg.ID, lineID)
 
-	// 4. Print label
-	lane, err := Print(pkg.ID, 0)
-	if err != nil {
-		fmt.Println("Print error:", err)
-		return
-	}
-	fmt.Println("Printed label for lane:", lane)
+		// 4. Print label and ship
+		lane, _ := w.Print(pkg.ID, lineID)
+		w.Ship(pkg.ID, lane)
 
-	// 5. Ship it
-	err = Ship(pkg.ID, lane)
-	if err != nil {
-		fmt.Println("Ship error:", err)
-		return
+		fmt.Printf("Shipped package %d to lane %s\n", pkg.ID, lane)
 	}
-	fmt.Println("Shipped package successfully!")
 }

@@ -2,26 +2,29 @@ class Package:
     id: int
     processingTime: int
 
-async def unload() -> Package:
-    """Unloads the next package from the intake belt."""
-    ...
+class Warehouse:
+    """The Warehouse API provides methods to interact with the logistics system."""
 
-async def pushToProcessingLine(packageId: int, processingLineId: int):
-    """Pushes a package onto a processing line queue (0, 1, or 2)."""
-    ...
+    async def unload(self) -> Package:
+        """Unloads the next package from the intake belt. Returns None if empty."""
+        ...
 
-async def processPackage(packageId: int, processingLineId: int):
-    """Processes a package at the head of a processing line."""
-    ...
+    async def pushToProcessingLine(self, packageId: int, processingLineId: int):
+        """Moves a package onto a processing line (0, 1, or 2)."""
+        ...
 
-async def print(packageId: int, processingLineId: int) -> str:
-    """Prints a label for a processed package and returns the assigned shipping lane ('North', 'South', or 'International')."""
-    ...
+    async def processPackage(self, packageId: int, processingLineId: int):
+        """Performs work on a package at the specified processing line (blocking)."""
+        ...
 
-async def ship(packageId: int, shippingLine: str):
-    """Enqueues a package into the specified shipping lane ('North', 'South', or 'International')."""
-    ...
+    async def print(self, packageId: int, processingLineId: int) -> str:
+        """Generates a shipping label and returns the assigned shipping lane."""
+        ...
 
-def getShippingLineQueueLength(shippingLine: str) -> int:
-    """Returns the current queue length for the requested shipping lane."""
-    ...
+    async def ship(self, packageId: int, shippingLine: str):
+        """Sends a package to the final shipping lane."""
+        ...
+
+    def getShippingLineQueueLength(self, shippingLine: str) -> int:
+        """Returns the number of packages currently waiting in a shipping lane."""
+        ...

@@ -132,11 +132,10 @@ export function registerPythonJediProvider(monaco: Monaco) {
             };
 
             const monacoSuggestions = suggestions.map((s: any) => {
-                // Determine if this is a warehouse method to add snippet behavior
-                let insertText = s.insertText;
                 let kind = mapJediKindToMonaco(s.kind, monaco);
+                let insertText = s.insertText;
 
-                // If it's a function from warehouse, we might want to trigger parameter hints or add parens
+                // Simple generic logic: add () for functions if not already present
                 if (
                     s.kind === "function" &&
                     !insertText.endsWith(")") &&
@@ -145,38 +144,7 @@ export function registerPythonJediProvider(monaco: Monaco) {
                         .trim()
                         .startsWith("(")
                 ) {
-                    // Check if it's a warehouse function to add snippets
-                    const warehouseFunctions = [
-                        "unload",
-                        "pushToProcessingLine",
-                        "processPackage",
-                        "print",
-                        "ship",
-                        "getShippingLineQueueLength",
-                    ];
-                    if (warehouseFunctions.includes(s.label)) {
-                        kind = monaco.languages.CompletionItemKind.Snippet;
-                        if (s.label === "unload") {
-                            insertText = "await unload()";
-                        } else if (s.label === "pushToProcessingLine") {
-                            insertText =
-                                "await pushToProcessingLine(${1:package_id}, ${2:line_id})";
-                        } else if (s.label === "processPackage") {
-                            insertText =
-                                "await processPackage(${1:package_id}, ${2:line_id})";
-                        } else if (s.label === "print") {
-                            insertText =
-                                "await print(${1:package_id}, ${2:line_id})";
-                        } else if (s.label === "ship") {
-                            insertText =
-                                "await ship(${1:package_id}, ${2:lane})";
-                        } else if (s.label === "getShippingLineQueueLength") {
-                            insertText =
-                                "getShippingLineQueueLength(${1:lane})";
-                        }
-                    } else {
-                        insertText = `${s.label}()`;
-                    }
+                    insertText = `${s.insertText}()`;
                 }
 
                 return {
@@ -185,11 +153,6 @@ export function registerPythonJediProvider(monaco: Monaco) {
                     detail: s.detail,
                     documentation: s.doc,
                     insertText: insertText,
-                    insertTextRules:
-                        kind === monaco.languages.CompletionItemKind.Snippet
-                            ? monaco.languages.CompletionItemInsertTextRule
-                                  .InsertAsSnippet
-                            : undefined,
                     range: range,
                 };
             });

@@ -1,4 +1,4 @@
-package main
+package warehouse
 
 /**
  * NOTE: This file is merely here to satisfy the Go language server (gopls)
@@ -11,26 +11,11 @@ type Package struct {
 	ProcessingTime int
 }
 
-func Unload() (*Package, error) {
-	return nil, nil
-}
-
-func PushToProcessingLine(packageId int, processingLineId int) error {
-	return nil
-}
-
-func ProcessPackage(packageId int, processingLineId int) error {
-	return nil
-}
-
-func Print(packageId int, processingLineId int) (string, error) {
-	return "", nil
-}
-
-func Ship(packageId int, shippingLine string) error {
-	return nil
-}
-
-func GetShippingLineQueueLength(shippingLine string) int {
-	return 0
+type Warehouse interface {
+	Unload() (*Package, error)
+	PushToProcessingLine(packageId int, processingLineId int) error
+	ProcessPackage(packageId int, processingLineId int) error
+	Print(packageId int, processingLineId int) (string, error)
+	Ship(packageId int, shippingLine string) error
+	GetShippingLineQueueLength(shippingLine string) int
 }
