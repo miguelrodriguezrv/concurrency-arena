@@ -1,0 +1,26 @@
+# Node deps and build artifacts
+node_modules
+dist
+build
+
+# VCS and system
+.git
+.gitignore
+.DS_Store
+
+# Local env / IDE
+.vscode
+.idea
+*.log
+.env
+.env.local
+
+# caches, editors, OS
+.npm
+.cache
+*.sqlite
+*.db
+
+# other local-only files
+coverage
+tmp
