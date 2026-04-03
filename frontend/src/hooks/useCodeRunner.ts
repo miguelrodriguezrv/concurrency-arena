@@ -13,6 +13,11 @@ export interface RunnerState {
     output: string[];
     error: string | null;
     metrics: MetricUpdatePayload;
+    // Definitive final metrics (from the Warehouse COMPLETED event)
+    finalMetrics?: {
+        finalUPM: number;
+        finalDuration: number;
+    };
     // Forwarded warehouse lifecycle events emitted by the Warehouse runtime
     warehouseEvents: unknown[];
 }
@@ -23,6 +28,7 @@ export const useCodeRunner = () => {
         output: [],
         error: null,
         metrics: { throughput: 0, collisions: 0, correctness: 0 },
+        finalMetrics: undefined,
         warehouseEvents: [],
     });
 
@@ -36,6 +42,7 @@ export const useCodeRunner = () => {
             setState((s) => ({
                 ...s,
                 status: "idle",
+                finalMetrics: undefined,
                 warehouseEvents: [
                     ...s.warehouseEvents,
                     {
@@ -60,6 +67,7 @@ export const useCodeRunner = () => {
                 output: [],
                 error: null,
                 metrics: { throughput: 0, collisions: 0, correctness: 0 },
+                finalMetrics: undefined,
                 warehouseEvents: [
                     { type: "RESET_WAREHOUSE" },
                     {
@@ -140,16 +148,28 @@ export const useCodeRunner = () => {
                             },
                         }));
                         break;
-                    case "WAREHOUSE_EVENT":
+                    case "WAREHOUSE_EVENT": {
+                        const payload = event.payload as any;
+                        // Capture definitive final metrics from the COMPLETED event
+                        if (payload?.type === "COMPLETED") {
+                            setState((s) => ({
+                                ...s,
+                                finalMetrics: {
+                                    finalUPM: payload.metadata?.finalUPM || 0,
+                                    finalDuration: payload.metadata?.finalDuration || 0,
+                                },
+                            }));
+                        }
                         // Append the forwarded WarehouseEvent payload for the visualizer to consume.
                         setState((s) => ({
                             ...s,
                             warehouseEvents: [
                                 ...s.warehouseEvents,
-                                event.payload,
+                                payload,
                             ],
                         }));
                         break;
+                    }
                     case "RUN_COMPLETE":
                         setState((s) => ({ ...s, status: "complete" }));
                         // Clean up successfully completed worker

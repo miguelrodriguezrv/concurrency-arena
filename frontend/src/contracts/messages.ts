@@ -16,6 +16,9 @@ export const MetricPayloadSchema = z
         throughput: z.number().optional(),
         correctness: z.number().optional(),
         collisions: z.number().optional(),
+        errors: z.number().optional(),
+        shipped: z.number().optional(),
+        fatal: z.boolean().optional(),
     })
     .catchall(z.unknown());
 

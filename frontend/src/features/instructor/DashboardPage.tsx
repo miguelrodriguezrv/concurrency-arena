@@ -15,6 +15,7 @@ import {
     Wifi,
     WifiOff,
     RefreshCw,
+    Trophy,
 } from "lucide-react";
 
 export default function DashboardPage() {
@@ -23,6 +24,7 @@ export default function DashboardPage() {
     const clearSession = useStore((state) => state.clearSession);
 
     const students = useStore((state) => state.students);
+    const leaderboard = useStore((state) => state.leaderboard);
     const stagedStudentName = useStore((state) => state.stagedStudentName);
     const activeCodeOnStage = useStore((state) => state.activeCodeOnStage);
     const setStagedStudent = useStore((state) => state.setStagedStudent);
@@ -231,6 +233,14 @@ export default function DashboardPage() {
                                             {student.name}
                                         </span>
 
+                                        {/* Best Score Badge */}
+                                        {leaderboard.find((e) => e.userName === student.name) && (
+                                            <Trophy
+                                                size={12}
+                                                className="text-yellow-500"
+                                            />
+                                        )}
+
                                         {/* Language badge: shows the student's active language */}
                                         <span className="ml-2 text-[11px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700">
                                             {student.language === "go"
@@ -247,31 +257,42 @@ export default function DashboardPage() {
                                     )}
                                 </div>
 
-                                {/* Mini Metric Preview (if any) */}
-                                <div className="flex items-center gap-3 text-xs text-zinc-500">
-                                    <div className="flex items-center gap-1">
-                                        <Activity
-                                            size={12}
-                                            className="text-sky-400"
-                                        />
-                                        <span>
-                                            {String(
-                                                student.metrics?.throughput ||
-                                                    0,
-                                            )}{" "}
-                                            t/s
-                                        </span>
+                                {/* Mini Metric Preview */}
+                                <div className="flex items-center justify-between text-xs">
+                                    <div className="flex items-center gap-3 text-zinc-500">
+                                        <div className="flex items-center gap-1" title="Live Throughput & Errors">
+                                            <Activity
+                                                size={12}
+                                                className={student.metrics?.errors && student.metrics.errors > 0 ? "text-rose-400" : student.metrics?.throughput && student.metrics.throughput > 0 ? "text-emerald-400" : "text-sky-400"}
+                                            />
+                                            <span className={student.metrics?.errors && student.metrics.errors > 0 ? "text-rose-400 font-medium" : student.metrics?.throughput && student.metrics.throughput > 0 ? "text-emerald-400 font-medium" : ""}>
+                                                {Number(student.metrics?.throughput || 0).toFixed(1)}{" "}
+                                                UPM
+                                            </span>
+                                            {(student.metrics as any)?.errors > 0 && (
+                                                <span className="text-rose-500 font-bold ml-1">
+                                                    ({(student.metrics as any).errors} err)
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-1" title="Lines of Code">
+                                            <Code2
+                                                size={12}
+                                                className="text-indigo-400"
+                                            />
+                                            <span className="capitalize">
+                                                {student.code.split("\n").length}{" "}
+                                                lines
+                                            </span>
+                                        </div>
                                     </div>
-                                    <div className="flex items-center gap-1">
-                                        <Code2
-                                            size={12}
-                                            className="text-indigo-400"
-                                        />
-                                        <span className="capitalize">
-                                            {student.code.split("\n").length}{" "}
-                                            lines
-                                        </span>
-                                    </div>
+
+                                    {/* Personal Best on Dashboard */}
+                                    {leaderboard.find((e) => e.userName === student.name) && (
+                                        <div className="text-[10px] font-bold text-zinc-500 bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800">
+                                            PB: {leaderboard.find((e) => e.userName === student.name)?.upm.toFixed(1)}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         ))

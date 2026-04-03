@@ -3,13 +3,15 @@ import { useStore } from "@/store";
 import { toast } from "react-hot-toast";
 import { wsClient } from "@/services/ws/client";
 import type { MetricPayload } from "@/contracts/messages";
+import type { ScoreEntry } from "@/store";
 
 export type MessageType =
     | "CODE_SYNC"
     | "METRIC_PULSE"
     | "ADMIN_COMMAND"
     | "PRESENCE_UPDATE"
-    | "INVALID_TOKEN";
+    | "INVALID_TOKEN"
+    | "SCORE_SUBMISSION";
 
 export interface WebSocketMessage {
     type: MessageType;
@@ -37,6 +39,7 @@ export const useWebSocket = () => {
     const updateStudentPresence = useStore(
         (state) => state.updateStudentPresence,
     );
+    const addScore = useStore((state) => state.addScore);
 
     const [status, setStatus] = useState<
         "disconnected" | "connecting" | "connected"
@@ -133,6 +136,14 @@ export const useWebSocket = () => {
             updateStudentPresence(payload.senderId, !!payload.connected);
         };
 
+        const onScoreSubmission = (payload: {
+            senderId?: string;
+            payload?: unknown;
+        }) => {
+            if (!payload?.payload) return;
+            addScore(payload.payload as ScoreEntry);
+        };
+
         // Wire up listeners to the singleton wsClient
         const offConnecting = wsClient.on("connecting", onConnecting);
         const offConnected = wsClient.on("connected", onConnected);
@@ -141,6 +152,10 @@ export const useWebSocket = () => {
         const offCodeSync = wsClient.on("code_sync", onCodeSync);
         const offMetricPulse = wsClient.on("metric_pulse", onMetricPulse);
         const offPresence = wsClient.on("presence_update", onPresence);
+        const offScoreSubmission = wsClient.on(
+            "score_submission",
+            onScoreSubmission,
+        );
 
         // Start or stop the client based on session token presence
         // Immediately sync UI status to the client's current readyState to avoid races
@@ -177,6 +192,7 @@ export const useWebSocket = () => {
             offCodeSync();
             offMetricPulse();
             offPresence();
+            offScoreSubmission();
         };
         // Depend on session.token and the store updaters
     }, [

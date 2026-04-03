@@ -7,11 +7,22 @@ import {
     getPersistedMonacoTheme,
     setPersistedMonacoTheme,
     clearAllStoredCodes,
+    getPersonalBest,
+    setPersonalBest as persistPersonalBest,
+    type SupportedLanguage,
 } from "@/lib/storage";
 
 export type Role = "Instructor" | "Student";
 
 export type StudentMetrics = MetricPayload;
+
+export interface ScoreEntry {
+    userName: string;
+    upm: number;
+    duration?: number;
+    language: string;
+    timestamp: number;
+}
 
 export interface Session {
     token: string;
@@ -58,9 +69,58 @@ interface AppState {
     activeCodeOnStage: string;
     setStagedStudent: (name: string | null) => void;
     setActiveCodeOnStage: (code: string) => void;
+
+    // Leaderboard & Personal Best
+    leaderboard: ScoreEntry[];
+    personalBests: Record<string, number>; // per-language PB
+    addScore: (entry: ScoreEntry) => void;
+    updatePersonalBest: (lang: string, upm: number) => void;
 }
 
 export const useStore = create<AppState>((set, get) => ({
+    // Leaderboard & Personal Best
+    leaderboard: [],
+    personalBests: {},
+
+    addScore: (entry) => {
+        set((state) => {
+            // Filter out any existing entry for this specific user to maintain "One entry per student"
+            const filtered = state.leaderboard.filter(
+                (e) => e.userName !== entry.userName,
+            );
+
+            // Check if this new score is actually better than what we just filtered out (or if it's brand new)
+            // Note: During hydration/sync, we might get multiple updates.
+            const existing = state.leaderboard.find(
+                (e) => e.userName === entry.userName,
+            );
+            if (existing && existing.upm >= entry.upm) {
+                return state;
+            }
+
+            const nextLeaderboard = [...filtered, entry]
+                .sort((a, b) => b.upm - a.upm) // Higher is better for UPM
+                .slice(0, 50);
+            return { leaderboard: nextLeaderboard };
+        });
+    },
+
+    updatePersonalBest: (lang, upm) => {
+        set((state) => {
+            const current = state.personalBests[lang] || 0;
+            if (upm > current) {
+                persistPersonalBest(lang as SupportedLanguage, upm);
+                return {
+                    personalBests: {
+                        ...state.personalBests,
+                        [lang]: upm,
+                    },
+                };
+            }
+            return state;
+        });
+    },
+
     session: null,
     setSession: (session) => {
         if (session) {
@@ -78,7 +138,17 @@ export const useStore = create<AppState>((set, get) => ({
     hydrateSession: () => {
         const sessionObj = getStoredSession();
         if (sessionObj) {
-            set({ session: sessionObj });
+            const languages: SupportedLanguage[] = [
+                "javascript",
+                "go",
+                "python",
+            ];
+            const pbs: Record<string, number> = {};
+            languages.forEach((lang) => {
+                const pb = getPersonalBest(lang);
+                if (pb !== null) pbs[lang] = pb;
+            });
+            set({ session: sessionObj, personalBests: pbs });
         }
     },
 
@@ -105,7 +175,13 @@ export const useStore = create<AppState>((set, get) => ({
                         name,
                         code: "",
                         codes: {},
-                        metrics: { throughput: 0, collisions: 0 },
+                        metrics: {
+                            throughput: 0,
+                            collisions: 0,
+                            errors: 0,
+                            shipped: 0,
+                            fatal: false,
+                        },
                         connected: true,
                         lastUpdated: Date.now(),
                         language: "javascript",

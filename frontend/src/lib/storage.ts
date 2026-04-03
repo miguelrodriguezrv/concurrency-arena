@@ -31,6 +31,7 @@ export const ARENA_CODE_PREFIX = "arena_code_"; // usage: arena_code_<language>
 export const ARENA_SESSION_KEY = "arena_session";
 export const MONACO_THEME_KEY = "monaco_theme";
 export const ARENA_CURRENT_LANGUAGE_KEY = "arena_current_language";
+export const ARENA_PERSONAL_BEST_PREFIX = "arena_pb_"; // usage: arena_pb_<language>
 
 /* ---------- Safe localStorage helpers ---------- */
 
@@ -260,6 +261,23 @@ export function clearSession(): boolean {
 }
 
 /* ---------- Theme helpers ---------- */
+
+/**
+ * Get persisted personal best for a language (units per minute).
+ */
+export function getPersonalBest(lang: SupportedLanguage): number | null {
+    const raw = safeGetItem(`${ARENA_PERSONAL_BEST_PREFIX}${lang}`);
+    if (!raw) return null;
+    const val = parseFloat(raw);
+    return isNaN(val) ? null : val;
+}
+
+/**
+ * Persist personal best for a language.
+ */
+export function setPersonalBest(lang: SupportedLanguage, upm: number): boolean {
+    return safeSetItem(`${ARENA_PERSONAL_BEST_PREFIX}${lang}`, upm.toString());
+}
 
 /**
  * Get the persisted Monaco theme id (e.g. "vs-dark" or "vs").

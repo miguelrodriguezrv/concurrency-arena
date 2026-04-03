@@ -94,4 +94,8 @@ export type Action =
           queueLength: number;
       }
     | { type: "SHIP_START"; packageId: number; laneId: string }
-    | { type: "SHIP_COMPLETE"; packageId: number };
+    | { type: "SHIP_COMPLETE"; packageId: number }
+    | {
+          type: "COMPLETED";
+          metadata?: { finalUPM: number; finalDuration: number };
+      };

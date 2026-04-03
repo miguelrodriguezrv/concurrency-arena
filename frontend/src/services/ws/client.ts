@@ -19,7 +19,8 @@ export type MessageType =
     | "METRIC_PULSE"
     | "ADMIN_COMMAND"
     | "PRESENCE_UPDATE"
-    | "INVALID_TOKEN";
+    | "INVALID_TOKEN"
+    | "SCORE_SUBMISSION";
 
 export interface WebSocketMessage {
     type: MessageType;
@@ -37,6 +38,7 @@ type EventName =
     | "metric_pulse"
     | "presence_update"
     | "admin_command"
+    | "score_submission"
     | "error"
     | "message"; // raw parsed message
 
@@ -292,6 +294,13 @@ export class WSClient {
                                 // still forward for diagnostics
                                 this.emitter.emit("admin_command", msg.payload);
                             }
+                            break;
+                        }
+                        case "SCORE_SUBMISSION": {
+                            this.emitter.emit("score_submission", {
+                                senderId: msg.senderId,
+                                payload: msg.payload,
+                            });
                             break;
                         }
                         default:

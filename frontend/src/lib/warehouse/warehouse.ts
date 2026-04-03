@@ -842,6 +842,20 @@ class Warehouse implements WarehouseAPI {
                             shipRemoveMs: SHIP_REMOVE_INTERVAL_MS,
                         },
                     });
+
+                    // If we just shipped the last package (99), the run is effectively complete.
+                    // Emit a definitive COMPLETED event with final metrics.
+                    if (packageId === 99 && this.firstUnloadTimestamp) {
+                        const finalDurationMs = this.lastShipTimestamp - this.firstUnloadTimestamp;
+                        const finalUPM = Math.floor((100 / (finalDurationMs / 60000)) * 10) / 10;
+                        this.emit("COMPLETED" as any, {
+                            metadata: {
+                                finalDuration: finalDurationMs,
+                                finalUPM,
+                                processedCount: this.processedCount,
+                            },
+                        });
+                    }
                 } catch (err) {
                     if (!this.shippingRunning || this.isHalted) return;
                     this.emit("ERROR", {

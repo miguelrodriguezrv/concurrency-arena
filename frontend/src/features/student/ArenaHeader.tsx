@@ -12,8 +12,10 @@ import {
     PanelRightOpen,
     PanelRightClose,
     BookOpen,
+    Trophy,
 } from "lucide-react";
 import RulesModal from "@/components/RulesModal";
+import LeaderboardModal from "@/components/LeaderboardModal";
 import type { SupportedLanguage, RunnerState } from "@/hooks/useCodeRunner";
 import { useStore } from "@/store";
 import { useState } from "react";
@@ -55,9 +57,16 @@ export default function ArenaHeader({
     };
 
     const [rulesOpen, setRulesOpen] = useState(false);
+    const [leaderboardOpen, setLeaderboardOpen] = useState(false);
 
     const openRules = () => setRulesOpen(true);
     const closeRules = () => setRulesOpen(false);
+
+    const openLeaderboard = () => setLeaderboardOpen(true);
+    const closeLeaderboard = () => setLeaderboardOpen(false);
+
+    const personalBests = useStore((state) => state.personalBests);
+    const currentPB = personalBests[language] || 0;
 
     return (
         <header className="h-14 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between px-4 lg:px-6 z-10 shrink-0">
@@ -78,8 +87,38 @@ export default function ArenaHeader({
                     </span>
                 </div>
 
-                <div className="flex items-center gap-4">
-                    <div title={`${status}`}>
+                <div className="flex items-center gap-2">
+                    {/* Leaderboard Button */}
+                    <button
+                        onClick={openLeaderboard}
+                        className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 hover:border-zinc-700 transition-all group"
+                        title="View Leaderboard"
+                    >
+                        <Trophy
+                            size={14}
+                            className={
+                                currentPB > 0
+                                    ? "text-yellow-500 group-hover:scale-110 transition-transform"
+                                    : "text-zinc-600"
+                            }
+                        />
+                        <div className="flex flex-col items-start leading-none">
+                            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-tight group-hover:text-zinc-400 transition-colors">
+                                Best UPM
+                            </span>
+                            <span
+                                className={`text-xs font-black ${
+                                    currentPB > 0
+                                        ? "text-emerald-400"
+                                        : "text-zinc-600"
+                                }`}
+                            >
+                                {currentPB > 0 ? currentPB.toFixed(1) : "N/A"}
+                            </span>
+                        </div>
+                    </button>
+
+                    <div title={`${status}`} className="ml-2">
                         {status === "connected" ? (
                             <Wifi size={16} className="text-emerald-500" />
                         ) : (
@@ -207,6 +246,7 @@ export default function ArenaHeader({
                 </button>
             </div>
             <RulesModal open={rulesOpen} onClose={closeRules} />
+            <LeaderboardModal open={leaderboardOpen} onClose={closeLeaderboard} />
         </header>
     );
 }

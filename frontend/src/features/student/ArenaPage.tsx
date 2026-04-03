@@ -7,6 +7,7 @@ import CodeEditor from "@/components/editor/CodeEditor";
 import ArenaHeader from "./ArenaHeader";
 import ConsoleOutput from "../../components/console/ConsoleOutput";
 import IncomingDiffModal from "@/components/editor/IncomingDiffModal";
+import useWarehouseMetrics from "@/components/warehouse/useWarehouseMetrics";
 import {
     DEFAULT_JS_CODE,
     DEFAULT_GO_CODE,
@@ -30,6 +31,8 @@ export default function ArenaPage() {
     // Restore subscribeToAdminCommands so admin PUSH_TEMPLATE commands are handled
     const { status, sendMessage, subscribeToAdminCommands } = useWebSocket();
     const { runnerState, executeCode, stopRun } = useCodeRunner();
+
+    const updatePersonalBest = useStore((state) => state.updatePersonalBest);
 
     const initialLanguage = (() => {
         try {
@@ -200,17 +203,62 @@ export default function ArenaPage() {
         };
     }, [subscribeToAdminCommands, session, language]);
 
-    // Sync metrics to instructor when running
-    useEffect(() => {
-        if (
-            runnerState.status === "running" ||
-            runnerState.status === "complete"
-        ) {
-            sendMessage("METRIC_PULSE", runnerState.metrics);
-        }
-    }, [runnerState.metrics, runnerState.status, sendMessage]);
+    const events = (runnerState.warehouseEvents || []) as import("@/components/warehouse/types").WarehouseEventPayload[];
+    const { throughputUnitsPerMin, isComplete, metrics } = useWarehouseMetrics(events);
+    const hasSubmittedScore = useRef(false);
 
-    if (!session) return null;
+    // Reset score submission flag when a new run starts
+    useEffect(() => {
+        if (runnerState.status === "running") {
+            hasSubmittedScore.current = false;
+        }
+    }, [runnerState.status]);
+
+    // Throttle Metric Pulse to instructor (Live UPM & Errors)
+    const metricsRef = useRef({ throughput: 0, errors: 0, shipped: 0, fatal: false });
+    useEffect(() => {
+        metricsRef.current = {
+            throughput: throughputUnitsPerMin,
+            errors: metrics.errorCount,
+            shipped: metrics.shippedCount,
+            fatal: metrics.fatalError
+        };
+    }, [throughputUnitsPerMin, metrics.errorCount, metrics.shippedCount, metrics.fatalError]);
+
+    useEffect(() => {
+        if (runnerState.status !== "running" || !session) return;
+
+        const pulseTimer = setInterval(() => {
+            sendMessage("METRIC_PULSE", metricsRef.current);
+        }, 2000); // 2 second pulse
+
+        return () => clearInterval(pulseTimer);
+    }, [runnerState.status, sendMessage, !!session]);
+
+    // Handle Score Submission
+    useEffect(() => {
+        if (!session) return;
+
+        // Use definitive metrics from runnerState.finalMetrics if available
+        const finalUPM = runnerState.finalMetrics?.finalUPM || 0;
+        const finalDuration = runnerState.finalMetrics?.finalDuration || 0;
+
+        if (isComplete && !metrics.fatalError && finalUPM > 0 && !hasSubmittedScore.current) {
+            hasSubmittedScore.current = true;
+            
+            // 1. Update Personal Best (local storage + state)
+            updatePersonalBest(language, finalUPM);
+
+            // 2. Broadcast to everyone via WebSocket
+            sendMessage("SCORE_SUBMISSION", {
+                userName: session.name,
+                upm: finalUPM,
+                duration: finalDuration,
+                language: language,
+                timestamp: Date.now()
+            });
+        }
+    }, [isComplete, metrics.fatalError, runnerState.finalMetrics, language, sendMessage, session?.name, updatePersonalBest]);
 
     const handleRunLocal = () => {
         if (runnerState.status === "running") {
@@ -250,6 +298,8 @@ export default function ArenaPage() {
             setLeftCollapsed(true);
         }
     };
+
+    if (!session) return null;
 
     return (
         <div className="relative flex flex-col h-screen w-full bg-zinc-950 text-zinc-100 font-sans overflow-hidden">

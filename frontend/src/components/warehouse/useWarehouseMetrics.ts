@@ -68,14 +68,23 @@ export default function useWarehouseMetrics(
         const startEvent = events[startIdx];
 
         const stopEvent = relevant.find((e) => e.type === "STOP_RUN");
+        const fatalErrorEvent = relevant.find(
+            (e) => e.type === "ERROR" && e.metadata?.fatal,
+        );
         const completeEvent = relevant.find(
             (e) => e.type === "SHIP_COMPLETE" && e.packageId === 99,
         );
 
+        const stopTs =
+            stopEvent?.timestamp ||
+            fatalErrorEvent?.timestamp ||
+            completeEvent?.timestamp ||
+            0;
+
         return {
             startTs: startEvent.timestamp || 0,
-            stopTs: stopEvent?.timestamp || completeEvent?.timestamp || 0,
-            isComplete: !!stopEvent || !!completeEvent,
+            stopTs,
+            isComplete: !!stopEvent || !!fatalErrorEvent || !!completeEvent,
             currentRunEvents: relevant,
         };
     }, [events]);
@@ -90,32 +99,22 @@ export default function useWarehouseMetrics(
 
         if (startTs === 0) {
             // schedule async update to set elapsed to zero
-            immediateTimer = setTimeout(() => {
-                setElapsedMs((prev) => (prev === 0 ? prev : 0));
-            }, 0);
-            return () => {
-                if (immediateTimer) clearTimeout(immediateTimer);
-            };
+            setElapsedMs(0);
+            return;
         }
 
         if (isComplete) {
             const final = Math.max(0, stopTs - startTs);
             // schedule async update for final elapsed time
-            immediateTimer = setTimeout(() => {
-                setElapsedMs((prev) => (prev === final ? prev : final));
-            }, 0);
-            return () => {
-                if (immediateTimer) clearTimeout(immediateTimer);
-            };
+            setElapsedMs(final);
+            return;
         }
 
         // Establish an asynchronous baseline value (avoid waiting for first tick)
         const nowInitial =
             typeof performance !== "undefined" ? performance.now() : Date.now();
         const initial = Math.max(0, nowInitial - startTs);
-        immediateTimer = setTimeout(() => {
-            setElapsedMs((prev) => (prev === initial ? prev : initial));
-        }, 0);
+        setElapsedMs(initial);
 
         // Live-updating timer (every 100ms) but only write when the computed
         // value actually changes to avoid unnecessary renders.
@@ -125,7 +124,7 @@ export default function useWarehouseMetrics(
                     ? performance.now()
                     : Date.now();
             const computed = Math.max(0, now - startTs);
-            setElapsedMs((prev) => (prev === computed ? prev : computed));
+            setElapsedMs(computed);
         }, 100);
 
         return () => {
@@ -213,7 +212,9 @@ export default function useWarehouseMetrics(
     const throughputUnitsPerMin = useMemo(() => {
         if (elapsedMs <= 0 || metrics.shippedCount === 0) return 0;
         const minutes = elapsedMs / 60000;
-        return metrics.shippedCount / minutes;
+        const raw = metrics.shippedCount / minutes;
+        // Truncate to 1 decimal to match definitive warehouse calculation
+        return Math.floor(raw * 10) / 10;
     }, [elapsedMs, metrics.shippedCount]);
 
     const formatTime = (ms: number) => {

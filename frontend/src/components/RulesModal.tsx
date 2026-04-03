@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { createPortal } from "react-dom";
-import { X } from "lucide-react";
+import { BookOpen } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
+import Modal from "./Modal";
 
 interface RulesModalProps {
     open: boolean;
@@ -64,41 +64,31 @@ export default function RulesModal({ open, onClose }: RulesModalProps) {
         };
     }, [open]);
 
-    if (!open) return null;
-
-    const modal = (
-        <div className="fixed inset-0 z-99999 flex items-center justify-center">
-            <div
-                className="absolute inset-0 bg-black/60"
-                onClick={onClose}
-                aria-hidden={true}
-            />
-
-            <div className="relative w-full max-w-3xl max-h-[80vh] bg-zinc-900 border border-zinc-800 rounded-lg p-4 overflow-auto">
-                <button
-                    onClick={onClose}
-                    className="p-1 rounded-md bg-zinc-800 hover:bg-zinc-700 absolute top-3 right-3"
-                    aria-label="Close Rules"
-                >
-                    <X size={18} />
-                </button>
-
-                <div className="prose prose-invert text-sm">
-                    {content ? (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                            {content}
-                        </ReactMarkdown>
-                    ) : (
-                        <div className="text-zinc-400">Loading rules…</div>
-                    )}
-                </div>
-            </div>
+    const footer = (
+        <div className="text-[10px] text-zinc-500 flex justify-start items-center font-bold uppercase tracking-wider">
+            <span>Click outside to close</span>
         </div>
     );
 
-    if (typeof document !== "undefined") {
-        return createPortal(modal, document.body);
-    }
-
-    return modal;
+    return (
+        <Modal
+            open={open}
+            onClose={onClose}
+            title="Warehouse Rules"
+            description="Guidelines for high-performance concurrency"
+            icon={<BookOpen className="text-blue-400" size={24} />}
+            footer={footer}
+            maxWidth="max-w-3xl"
+        >
+            <div className="p-4 pt-0 prose prose-invert text-sm max-w-none">
+                {content ? (
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+                        {content}
+                    </ReactMarkdown>
+                ) : (
+                    <div className="text-zinc-400 italic">Loading rules…</div>
+                )}
+            </div>
+        </Modal>
+    );
 }
