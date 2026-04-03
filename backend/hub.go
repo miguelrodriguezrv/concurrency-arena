@@ -17,6 +17,14 @@ type StudentState struct {
 	Metrics   json.RawMessage            `json:"metrics"`
 }
 
+// ScoreEntry holds a student's best throughput performance.
+type ScoreEntry struct {
+	UserName  string  `json:"userName"`
+	UPM       float64 `json:"upm"`
+	Language  string  `json:"language"`
+	Timestamp int64   `json:"timestamp"`
+}
+
 // Session holds authentication information for a connected user.
 type Session struct {
 	Token string
@@ -36,6 +44,10 @@ type Hub struct {
 	// studentStates stores the latest code snippet and metrics for every StudentID
 	studentStates map[string]*StudentState
 	stateMu       sync.RWMutex
+
+	// leaderboard stores the absolute best score per student name
+	leaderboard   map[string]ScoreEntry
+	leaderboardMu sync.RWMutex
 
 	// Inbound messages from the clients
 	broadcast chan Message
@@ -57,6 +69,7 @@ func NewHub() *Hub {
 		instructors:   make(map[string]*Client),
 		studentStates: make(map[string]*StudentState),
 		sessions:      make(map[string]*Session),
+		leaderboard:   make(map[string]ScoreEntry),
 	}
 }
 
@@ -112,20 +125,6 @@ type AdminCommandPayload struct {
 
 // Run starts the hub's main event loop
 func (h *Hub) Run() {
-	// go func() {
-	// 	for range time.Tick(5 * time.Second) {
-	// 		h.clientsMu.RLock()
-	// 		instrCount := len(h.instructors)
-	// 		studCount := len(h.students)
-	// 		h.clientsMu.RUnlock()
-
-	// 		h.stateMu.RLock()
-	// 		knownStudents := len(h.studentStates)
-	// 		h.stateMu.RUnlock()
-
-	// 		log.Printf("[WS] hub.status: instructors=%d students=%d knownStates=%d", instrCount, studCount, knownStudents)
-	// 	}
-	// }()
 	log.Printf("[WS] hub.Run started")
 	defer func() {
 		if r := recover(); r != nil {
@@ -145,6 +144,21 @@ func (h *Hub) Run() {
 			}
 			log.Printf("[WS] %s connected: %s", client.Role, client.ID)
 			h.clientsMu.Unlock()
+
+			// Hydrate the new client with the current leaderboard
+			go func(c *Client) {
+				h.leaderboardMu.RLock()
+				defer h.leaderboardMu.RUnlock()
+				for _, entry := range h.leaderboard {
+					payload, _ := json.Marshal(entry)
+					c.send <- Message{
+						Type:     MsgTypeScoreSubmission,
+						Payload:  payload,
+						SenderID: "SYSTEM",
+						Role:     RoleInstructor,
+					}
+				}
+			}(client)
 
 			if client.Role == RoleInstructor {
 				go func(c *Client) {
@@ -273,6 +287,28 @@ func (h *Hub) broadcastToInstructors(msg Message) {
 	}
 }
 
+// broadcastToAll sends a message to all connected clients (instructors and students)
+func (h *Hub) broadcastToAll(msg Message) {
+	h.clientsMu.RLock()
+	defer h.clientsMu.RUnlock()
+
+	// 1. To Instructors
+	for _, instructor := range h.instructors {
+		select {
+		case instructor.send <- msg:
+		default:
+		}
+	}
+
+	// 2. To Students
+	for _, student := range h.students {
+		select {
+		case student.send <- msg:
+		default:
+		}
+	}
+}
+
 // handleMessage processes an incoming message, updates state, and routes it to the correct recipients
 func (h *Hub) handleMessage(msg Message) {
 	log.Printf("[WS] Handling message from %s (Role: %s, Type: %s)", msg.SenderID, msg.Role, msg.Type)
@@ -310,6 +346,23 @@ func (h *Hub) handleMessage(msg Message) {
 	switch msg.Type {
 	case MsgTypeCodeSync, MsgTypeMetricPulse:
 		h.broadcastToInstructors(msg)
+
+	case MsgTypeScoreSubmission:
+		// Student -> Server -> Everyone (Instructors + Students)
+		// 1. Logic: Update leaderboard best-per-student
+		var entry ScoreEntry
+		if err := json.Unmarshal(msg.Payload, &entry); err == nil {
+			h.leaderboardMu.Lock()
+			current, exists := h.leaderboard[entry.UserName]
+			if !exists || entry.UPM > current.UPM {
+				h.leaderboard[entry.UserName] = entry
+				h.leaderboardMu.Unlock()
+				// 2. Broadcast ONLY successful better scores
+				h.broadcastToAll(msg)
+			} else {
+				h.leaderboardMu.Unlock()
+			}
+		}
 
 	case MsgTypeAdminCommand:
 		// Instructor -> Server -> Students (supports optional target)

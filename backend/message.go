@@ -17,6 +17,9 @@ const (
 
 	// PRESENCE_UPDATE: Server -> Instructor (Notify of student connection/disconnection)
 	MsgTypePresenceUpdate MessageType = "PRESENCE_UPDATE"
+
+	// SCORE_SUBMISSION: Student -> Server -> Everyone (Broadcast new best score)
+	MsgTypeScoreSubmission MessageType = "SCORE_SUBMISSION"
 )
 
 // ClientRole defines the connection type
