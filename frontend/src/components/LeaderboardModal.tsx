@@ -1,4 +1,4 @@
-import { Trophy, Clock, Timer } from "lucide-react";
+import { Trophy, Timer } from "lucide-react";
 import { useStore } from "@/store";
 import Modal from "./Modal";
 
