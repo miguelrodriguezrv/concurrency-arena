@@ -35,9 +35,15 @@ services:
         container_name: ca-cloudflared
         depends_on:
             - frontend
+        # Mount the local cloudflared config directory (contains config.yml and credentials json)
         volumes:
             - ./cloudflared:/etc/cloudflared:ro
-        command: tunnel --url http://frontend:80
+        # Use the named tunnel created earlier. This avoids ephemeral --url usage and
+        # ensures the route DNS points to the named tunnel.
+        command: tunnel run concurrency-arena
+        environment:
+            # cloudflared requires an origin cert file (cert.pem). Place it at ./cloudflared/cert.pem
+            - TUNNEL_ORIGIN_CERT=/etc/cloudflared/cert.pem
         restart: unless-stopped
         networks:
             - ca-network
