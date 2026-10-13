@@ -170,6 +170,8 @@ func (h *Hub) Run() {
 
 			// Hydrate the new client with the current leaderboard
 			go func(c *Client) {
+				// c.send may be closed if the client disconnects meanwhile
+				defer recoverClosedSend()
 				h.leaderboardMu.RLock()
 				defer h.leaderboardMu.RUnlock()
 				for _, entry := range h.leaderboard {
@@ -185,6 +187,7 @@ func (h *Hub) Run() {
 
 			if client.Role == RoleInstructor {
 				go func(c *Client) {
+					defer recoverClosedSend()
 					h.stateMu.RLock()
 					defer h.stateMu.RUnlock()
 					log.Printf("[WS] Sending current state of all students (%d) to instructor: %s", len(h.studentStates), c.ID)
@@ -257,31 +260,40 @@ func (h *Hub) Run() {
 			}
 
 		case client := <-h.unregister:
+			// The same name can connect more than once (reload, second tab,
+			// another device); the newest connection replaces the older one in
+			// the maps. Only remove the entry if it is still THIS connection,
+			// otherwise an old tab closing would knock out the live one.
 			h.clientsMu.Lock()
+			current := false
 			switch client.Role {
 			case RoleInstructor:
-				if _, ok := h.instructors[client.ID]; ok {
+				if c, ok := h.instructors[client.ID]; ok && c == client {
 					delete(h.instructors, client.ID)
-					close(client.send)
-					log.Printf("[WS] Instructor disconnected: %s", client.ID)
+					current = true
 				}
 			case RoleStudent:
-				if _, ok := h.students[client.ID]; ok {
+				if c, ok := h.students[client.ID]; ok && c == client {
 					delete(h.students, client.ID)
-					close(client.send)
-					log.Printf("[WS] Student disconnected: %s", client.ID)
-
-					h.stateMu.Lock()
-					if state, exists := h.studentStates[client.ID]; exists {
-						state.Connected = false
-					}
-					h.stateMu.Unlock()
+					current = true
 				}
 			}
+			// Each connection is unregistered exactly once, and a replaced
+			// connection is no longer in the maps, so this is the only close.
+			close(client.send)
 			h.clientsMu.Unlock()
+			log.Printf("[WS] %s disconnected: %s (current connection: %t)", client.Role, client.ID, current)
+
+			if current && client.Role == RoleStudent {
+				h.stateMu.Lock()
+				if state, exists := h.studentStates[client.ID]; exists {
+					state.Connected = false
+				}
+				h.stateMu.Unlock()
+			}
 
 			// Notify instructors that a student is now offline
-			if client.Role == RoleStudent {
+			if current && client.Role == RoleStudent {
 				presencePayload, _ := json.Marshal(false)
 				h.broadcastToInstructors(Message{
 					Type:     MsgTypePresenceUpdate,
@@ -294,6 +306,14 @@ func (h *Hub) Run() {
 		case msg := <-h.broadcast:
 			h.handleMessage(msg)
 		}
+	}
+}
+
+// recoverClosedSend stops a "send on closed channel" panic in a background
+// hydration goroutine (client disconnected meanwhile) from crashing the server.
+func recoverClosedSend() {
+	if r := recover(); r != nil {
+		log.Printf("[WS] hydration aborted, client went away: %v", r)
 	}
 }
 
