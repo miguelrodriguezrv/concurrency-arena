@@ -8,11 +8,11 @@
  * - The Warehouse enforces physical constraints by validating calls and
  *   throwing immediately on violations. It does NOT block/wait for students.
  * - The only read-only inspection helper exposed to students is:
- *     `getShippingLineQueueLength(shippingLine)`
+ *     `getShippingLaneQueueLength(shippingLane)`
  * - Packages returned by `unload()` are deliberately minimal (public view).
  */
 
-export type ShippingLine = "North" | "South" | "International";
+export type ShippingLane = "North" | "South" | "International";
 
 /**
  * ProcessingLineId is an index for the three processing lines.
@@ -48,7 +48,7 @@ export interface WarehouseEvent {
     // Optional identifiers to help consumers correlate events
     packageId?: number;
     processingLineId?: ProcessingLineId;
-    shippingLine?: ShippingLine;
+    shippingLane?: ShippingLane;
 
     // Timestamp should use performance.now() where available (otherwise Date.now()).
     timestamp: number;
@@ -102,16 +102,16 @@ export interface WarehouseAPI {
     print(
         packageId: number,
         processingLineId: ProcessingLineId,
-    ): Promise<ShippingLine>;
+    ): Promise<ShippingLane>;
 
     /**
      * Ship the printed package at the head of its line into its lane (max 4
      * waiting). Resolves once enqueued; lanes load trucks in the background.
      */
-    ship(packageId: number, shippingLine: ShippingLine): Promise<void>;
+    ship(packageId: number, shippingLane: ShippingLane): Promise<void>;
 
     /** Current queue length of a shipping lane (0..4). Optimistic: may change. */
-    getShippingLineQueueLength(shippingLine: ShippingLine): number;
+    getShippingLaneQueueLength(shippingLane: ShippingLane): number;
 
     /**
      * Subscribe to Warehouse events.

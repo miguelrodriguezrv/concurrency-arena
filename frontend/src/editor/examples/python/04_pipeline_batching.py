@@ -136,7 +136,7 @@ async def printer(w, f: Floor):
         at = line
 
         # Only this coordinator ships, so check-then-ship can't race here.
-        while w.getShippingLineQueueLength(lane) >= LANE_CAPACITY:
+        while w.getShippingLaneQueueLength(lane) >= LANE_CAPACITY:
             await asyncio.sleep(0.02)
         await w.ship(item.id, lane)
 

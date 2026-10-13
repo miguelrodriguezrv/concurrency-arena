@@ -26,7 +26,7 @@ lane_locks = {lane: asyncio.Lock() for lane in LANES}
 
 async def ship_when_there_is_room(w, pkg_id, lane):
     async with lane_locks[lane]:
-        while w.getShippingLineQueueLength(lane) >= 4:
+        while w.getShippingLaneQueueLength(lane) >= 4:
             await asyncio.sleep(0.05)  # the lane is full: wait for the truck
         await w.ship(pkg_id, lane)
 

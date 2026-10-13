@@ -147,9 +147,9 @@ async function worker(workerId) {
 
             // 3. Printing Critical Section
             await printerLock.lock();
-            let shippingLine;
+            let shippingLane;
             try {
-                shippingLine = await warehouse.print(pkg.id, lineId);
+                shippingLane = await warehouse.print(pkg.id, lineId);
             } finally {
                 printerLock.unlock();
             }
@@ -158,7 +158,7 @@ async function worker(workerId) {
             let shipped = false;
             while (!shipped) {
                 try {
-                    await warehouse.ship(pkg.id, shippingLine);
+                    await warehouse.ship(pkg.id, shippingLane);
                     shipped = true;
                 } catch (err) {
                     await delay(500); // Lane full, wait for truck removal

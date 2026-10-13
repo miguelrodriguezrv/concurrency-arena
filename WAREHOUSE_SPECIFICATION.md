@@ -26,13 +26,13 @@ Stages (strict order):
 1. Intake — `unload()` (IntakeLine)
 2. Induction — `pushToProcessingLine(pkg, processingLineId)` (ProcessingLine 0, 1, 2)
 3. Processing — `process(pkg, processingLineId)`
-4. Labeling — `print(pkg, processingLineId)` → returns a `ShippingLine`
-5. Shipping — `ship(packageId, shippingLine)`
+4. Labeling — `print(pkg, processingLineId)` → returns a `ShippingLane`
+5. Shipping — `ship(packageId, shippingLane)`
 
 Naming conventions (use these exact terms in code and docs):
 - IntakeLine — single intake conveyor where `unload()` places packages.
 - ProcessingLine — three processing conveyors (indices `0`, `1`, `2`) where packages queue and are processed at the head.
-- ShippingLine — three shipping queues (identifiers: `North`, `South`, `International`).
+- ShippingLane — three shipping queues (identifiers: `North`, `South`, `International`).
 
 ---
 
@@ -47,7 +47,7 @@ Private / internal (Warehouse-only)
 - Each package has private tracking fields used for validation. These are NOT exposed to student code:
   - `targetLane: "North" | "South" | "International"` — assigned deterministically when the deck is created; only revealed by `print()`.
   - `location: string` — one of:
-    - `"deck"`, `"intake"`, `"processingLine0"`, `"processingLine1"`, `"processingLine2"`, `"shippingLineNorth"`, `"shippingLineSouth"`, `"shippingLineInternational"`, `"shipped"`.
+    - `"deck"`, `"intake"`, `"processingLine0"`, `"processingLine1"`, `"processingLine2"`, `"shippingLaneNorth"`, `"shippingLaneSouth"`, `"shippingLaneInternational"`, `"shipped"`.
     - This always represents the package's current physical location inside the Warehouse.
   - `status: string` — one of:
     - `"unprocessed"`, `"unloaded"`, `"processed"`, `"printed"`, `"shipped"`.
@@ -66,13 +66,13 @@ All APIs are async and validator-only (throw immediately on rule violations). Th
 Constants (current defaults)
 - Intake concurrency: 4 simultaneous `unload()` calls allowed.
 - ProcessingLine capacity: 5 per line (queued items).
-- ShippingLine capacity: 5 per shipping line.
+- ShippingLane capacity: 5 per shipping lane.
 - Timings:
   - `unload()`: 200 ms
   - `pushToProcessingLine()`: 50 ms
   - `process()`: `pkg.processingTime` (per-package)
   - `print()`: 100 ms base + 500 ms travel penalty if printer moves between lines
-  - Shipping (background removal): one shipped item per ShippingLine every 500 ms
+  - Shipping (background removal): one shipped item per ShippingLane every 500 ms
   - `ship()` call itself: small enqueue delay (10–50 ms); resolves immediately after enqueue
 
 APIs
@@ -121,14 +121,14 @@ APIs
 
 5) Shipping — ship
 - Signature:
-  - `async ship(packageId: number, shippingLine: "North"|"South"|"International"): Promise<void>`
+  - `async ship(packageId: number, shippingLane: "North"|"South"|"International"): Promise<void>`
 - Behavior & validation:
   - Quick enqueue: small internal delay (10–50 ms), then return immediately once the package is enqueued.
   - Validate:
-    - The package must exist and must have been `printed`. The package's private `targetLane` must equal the provided `shippingLine`. If not, throw `HandshakeError`.
-    - If the ShippingLine queue is full (>= capacity 5), throw `CapacityError`.
-  - On success: set package `location` to the shipping queue (e.g., `"shippingLineNorth"`), update status to indicate queued for shipping, emit `SHIP_ENQUEUED` event.
-  - Background behavior: the Warehouse processes each ShippingLine in the background, removing (shipping) the head item at a rate of one every 500 ms. When removed, the Warehouse sets `status = "shipped"` and `location = "shipped"` and emits `SHIP_START`/`SHIP_COMPLETE` events.
+    - The package must exist and must have been `printed`. The package's private `targetLane` must equal the provided `shippingLane`. If not, throw `HandshakeError`.
+    - If the ShippingLane queue is full (>= capacity 5), throw `CapacityError`.
+  - On success: set package `location` to the shipping queue (e.g., `"shippingLaneNorth"`), update status to indicate queued for shipping, emit `SHIP_ENQUEUED` event.
+  - Background behavior: the Warehouse processes each ShippingLane in the background, removing (shipping) the head item at a rate of one every 500 ms. When removed, the Warehouse sets `status = "shipped"` and `location = "shipped"` and emits `SHIP_START`/`SHIP_COMPLETE` events.
 
 Notes
 - `ship()` resolves after enqueue. If students want to "stay attached", they must implement their own mechanism for awaiting a promise resolved on actual shipping; the Warehouse API only returns after enqueue.
@@ -139,9 +139,9 @@ Notes
 
 To keep the runtime lean and avoid encouraging students to gate every call on Warehouse state, the only read-only inspection helper exposed is:
 
-- `getShippingLineQueueLength(shippingLine: "North"|"South"|"International"): number`
+- `getShippingLaneQueueLength(shippingLane: "North"|"South"|"International"): number`
 
-This returns the current queue length (0..capacity) for the specified ShippingLine so students can avoid trying to `ship()` into a full lane. It does NOT guarantee that a subsequent `ship()` will succeed (TOCTOU races are expected).
+This returns the current queue length (0..capacity) for the specified ShippingLane so students can avoid trying to `ship()` into a full lane. It does NOT guarantee that a subsequent `ship()` will succeed (TOCTOU races are expected).
 
 No other inspection helpers (e.g., line queue lengths or package private fields) are provided.
 
@@ -174,7 +174,7 @@ Suggested typed errors (implementation detail):
 - `ValidationError` — wrong location/status or invalid input
 - `CapacityError` — intake/processing/shipping capacity exceeded
 - `ResourceBusyError` — printer or processing station already in use
-- `HandshakeError` — `ship()` called with wrong ShippingLine for the package
+- `HandshakeError` — `ship()` called with wrong ShippingLane for the package
 
 The Runner/Executor decides punitive measures (e.g., soft penalty vs. hard abort) when `ERROR` events occur.
 
@@ -188,7 +188,7 @@ Because the Warehouse is validator-only:
   - An Unloader pool guarded by a Semaphore(4) to gate calls to `unload()`.
   - Per-ProcessingLine queues of capacity 5 and worker(s) that pop and call `process()` (ensuring head-of-line semantics).
   - A local printer coordinator or mutex to ensure only one `print()` call reaches the Warehouse at a time; coordinate movement to minimize travel penalty.
-  - Use `getShippingLineQueueLength()` to avoid enqueuing into a full ShippingLine.
+  - Use `getShippingLaneQueueLength()` to avoid enqueuing into a full ShippingLane.
 
 Handle thrown errors robustly: retry with backoff, pick alternate lines, or requeue work.
 
@@ -214,10 +214,10 @@ Example: fire 5 concurrent `unload()` calls (expect at most 4 succeed; 5th throw
 })();
 ```
 
-Example: check a shipping line length before enqueueing (optimistic, still must handle throws):
+Example: check a shipping lane length before enqueueing (optimistic, still must handle throws):
 
 ```js
-const len = warehouse.getShippingLineQueueLength('North');
+const len = warehouse.getShippingLaneQueueLength('North');
 if (len < 5) {
   try {
     await warehouse.ship(pkg.id, 'North');

@@ -33,7 +33,7 @@ export function targetKey(t: RejectTarget): string {
 export function classifyRejection(ev: WarehouseEventPayload): Rejection {
     const msg = String(ev.metadata?.message ?? "");
     const line = ev.processingLineId;
-    const lane = ev.shippingLine ?? ev.laneId;
+    const lane = ev.shippingLane ?? ev.laneId;
     const lineTarget = (fallback: RejectTarget): RejectTarget =>
         typeof line === "number" && line >= 0 && line <= 2
             ? { kind: "line", line }

@@ -37,11 +37,11 @@ class Warehouse:
         """Generates a shipping label and returns the assigned shipping lane."""
         pass
 
-    async def ship(self, packageId: int, shippingLine: str):
+    async def ship(self, packageId: int, shippingLane: str):
         """Sends a package to the final shipping lane."""
         pass
 
-    def getShippingLineQueueLength(self, shippingLine: str) -> int:
+    def getShippingLaneQueueLength(self, shippingLane: str) -> int:
         """Returns the number of packages currently waiting in a shipping lane."""
         pass
 
@@ -75,12 +75,12 @@ async def _print(packageId, processingLineId):
     return str(await _js_warehouse.print(packageId, processingLineId))
 
 
-async def _ship(packageId, shippingLine):
-    return await _js_warehouse.ship(packageId, shippingLine)
+async def _ship(packageId, shippingLane):
+    return await _js_warehouse.ship(packageId, shippingLane)
 
 
-def _queue_length(shippingLine):
-    return int(_js_warehouse.getShippingLineQueueLength(shippingLine))
+def _queue_length(shippingLane):
+    return int(_js_warehouse.getShippingLaneQueueLength(shippingLane))
 
 
 # Expose the API on the module, so run(w) receives an object with these methods.
@@ -90,7 +90,7 @@ _api = {
     "processPackage": _process,
     "print": _print,
     "ship": _ship,
-    "getShippingLineQueueLength": _queue_length,
+    "getShippingLaneQueueLength": _queue_length,
 }
 for _name, _fn in _api.items():
     setattr(warehouse, _name, _fn)

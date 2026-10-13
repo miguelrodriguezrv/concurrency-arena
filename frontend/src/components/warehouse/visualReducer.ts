@@ -179,7 +179,7 @@ export function visualReducer(state: VisualState, action: Action): VisualState {
         case "PRINT_SUCCESS": {
             const pkg = newPackages[action.packageId];
             if (pkg) {
-                pkg.shippingLine = action.laneId;
+                pkg.shippingLane = action.laneId;
                 pkg.isPrinted = true;
                 pkg.statusString = "printed";
             }
@@ -209,9 +209,9 @@ export function visualReducer(state: VisualState, action: Action): VisualState {
                 newShipQueue.push(action.packageId);
             }
 
-            pkg.stage = "SHIPPING_LINE";
+            pkg.stage = "SHIPPING_LANE";
             pkg.statusString = "shipping";
-            pkg.shippingLine = laneId;
+            pkg.shippingLane = laneId;
             updateQueueIndices(newPackages, newShipQueue);
 
             return {
@@ -228,7 +228,7 @@ export function visualReducer(state: VisualState, action: Action): VisualState {
 
             // The loader takes the head of the lane into the truck. It no longer
             // occupies a lane slot (matches the warehouse's capacity accounting).
-            const laneId = pkg.shippingLine ?? action.laneId;
+            const laneId = pkg.shippingLane ?? action.laneId;
             const newShipQueue = (shippingQueues[laneId] || []).filter(
                 (id) => id !== action.packageId,
             );
@@ -237,7 +237,7 @@ export function visualReducer(state: VisualState, action: Action): VisualState {
                 ...pkg,
                 stage: "LOADING",
                 statusString: "loading into truck",
-                shippingLine: laneId,
+                shippingLane: laneId,
             };
             return {
                 ...state,
@@ -250,7 +250,7 @@ export function visualReducer(state: VisualState, action: Action): VisualState {
             const pkg = newPackages[action.packageId];
             if (!pkg) return state;
 
-            const laneId = pkg.shippingLine;
+            const laneId = pkg.shippingLane;
             if (laneId) {
                 const newShipQueue = (shippingQueues[laneId] || []).filter(
                     (id) => id !== action.packageId,

@@ -25,7 +25,7 @@ const laneLocks = { North: new Mutex(), South: new Mutex(), International: new M
 
 async function shipWhenThereIsRoom(id, lane) {
     await laneLocks[lane].runExclusive(async () => {
-        while (warehouse.getShippingLineQueueLength(lane) >= 4) {
+        while (warehouse.getShippingLaneQueueLength(lane) >= 4) {
             await sleep(50); // the lane is full: wait for the truck
         }
         await warehouse.ship(id, lane);

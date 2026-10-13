@@ -200,14 +200,14 @@ export function WarehouseVisualizer({ events = [] }: WarehouseVisualizerProps) {
                     dispatch({
                         type: "PRINT_SUCCESS",
                         packageId: data.packageId,
-                        laneId: data.shippingLine || data.laneId!,
+                        laneId: data.shippingLane || data.laneId!,
                     });
                     break;
                 case "SHIP_ENQUEUED":
                     dispatch({
                         type: "SHIP_ENQUEUED",
                         packageId: data.packageId,
-                        laneId: data.shippingLine || data.laneId!,
+                        laneId: data.shippingLane || data.laneId!,
                         queueLength: data.metadata?.queueLength || 0,
                     });
                     break;
@@ -215,7 +215,7 @@ export function WarehouseVisualizer({ events = [] }: WarehouseVisualizerProps) {
                     dispatch({
                         type: "SHIP_START",
                         packageId: data.packageId,
-                        laneId: data.shippingLine || data.laneId!,
+                        laneId: data.shippingLane || data.laneId!,
                     });
                     break;
                 case "SHIP_COMPLETE":
@@ -417,7 +417,7 @@ export function WarehouseVisualizer({ events = [] }: WarehouseVisualizerProps) {
                         </div>
                         <CapacityBadge
                             count={state.shippingQueues[name]?.length ?? 0}
-                            capacity={WAREHOUSE_LIMITS.shippingLine}
+                            capacity={WAREHOUSE_LIMITS.shippingLane}
                             flashing={isFlashing(`lane-${name}`)}
                             title={`Packages waiting in the ${name} lane`}
                             style={{ left: LAYOUT.SHIPPING_BELT_END_X - 4, top: y - 44 }}
@@ -514,7 +514,7 @@ export function WarehouseVisualizer({ events = [] }: WarehouseVisualizerProps) {
                         const coords = getPackageCoords(pkg);
                         const isLine =
                             pkg.stage === "PROCESSING_LINE" ||
-                            pkg.stage === "SHIPPING_LINE";
+                            pkg.stage === "SHIPPING_LANE";
 
                         let bgColor = "bg-amber-600";
                         if (pkg.isPrinted) bgColor = "bg-emerald-600";

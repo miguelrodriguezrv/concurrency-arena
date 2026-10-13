@@ -18,6 +18,6 @@ type Warehouse interface {
 	PushToProcessingLine(packageId int, processingLineId int) error
 	ProcessPackage(packageId int, processingLineId int) error
 	Print(packageId int, processingLineId int) (string, error)
-	Ship(packageId int, shippingLine string) error
-	GetShippingLineQueueLength(shippingLine string) int
+	Ship(packageId int, shippingLane string) error
+	GetShippingLaneQueueLength(shippingLane string) int
 }

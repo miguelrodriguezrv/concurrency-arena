@@ -25,11 +25,11 @@ class Warehouse:
         the single printer has to move). Returns 'North', 'South' or 'International'."""
         ...
 
-    async def ship(self, packageId: int, shippingLine: str) -> None:
+    async def ship(self, packageId: int, shippingLane: str) -> None:
         """Send the printed package at the end of its line to the lane print()
         returned (80 ms). Each lane holds 4 and loads one package every 1.4 s."""
         ...
 
-    def getShippingLineQueueLength(self, shippingLine: str) -> int:
+    def getShippingLaneQueueLength(self, shippingLane: str) -> int:
         """How many packages wait in a lane right now (0-4). May change right after."""
         ...

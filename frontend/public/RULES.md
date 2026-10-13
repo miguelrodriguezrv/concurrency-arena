@@ -289,7 +289,7 @@ await warehouse.pushToProcessingLine(pkg.id, line);  // line: 0 | 1 | 2
 await warehouse.processPackage(pkg.id, line);
 const lane = await warehouse.print(pkg.id, line);    // "North" | "South" | "International"
 await warehouse.ship(pkg.id, lane);
-warehouse.getShippingLineQueueLength(lane);          // 0..4 (no await)
+warehouse.getShippingLaneQueueLength(lane);          // 0..4 (no await)
 ```
 
 A rejected call throws an `Error`. Catch it with `try / catch`.
@@ -313,7 +313,7 @@ await w.pushToProcessingLine(pkg.id, line)  # line: 0 | 1 | 2
 await w.processPackage(pkg.id, line)
 lane = await w.print(pkg.id, line)          # "North" | "South" | "International"
 await w.ship(pkg.id, lane)
-w.getShippingLineQueueLength(lane)          # 0..4 (no await)
+w.getShippingLaneQueueLength(lane)          # 0..4 (no await)
 ```
 
 A rejected call raises an exception. Catch it with `try / except Exception`. Useful tools: `asyncio.gather`, `asyncio.Lock`, `asyncio.Semaphore`, `asyncio.Queue`, `asyncio.Condition`.
@@ -327,7 +327,7 @@ err = w.PushToProcessingLine(pkg.ID, line)  // line: 0, 1 or 2
 err = w.ProcessPackage(pkg.ID, line)
 lane, err := w.Print(pkg.ID, line)          // "North" | "South" | "International"
 err = w.Ship(pkg.ID, lane)
-n := w.GetShippingLineQueueLength(lane)     // 0..4
+n := w.GetShippingLaneQueueLength(lane)     // 0..4
 ```
 
 A rejected call returns an `error`. Useful tools: goroutines, `sync.WaitGroup`, `sync.Mutex`, `sync.Cond`, channels.

@@ -3,7 +3,7 @@
  *
  * Implements the Warehouse API described in WAREHOUSE_SPECIFICATION.md:
  * - Validator-only: calls immediately throw (and emit ERROR) on rule violations.
- * - Minimal inspection API: getShippingLineQueueLength(...)
+ * - Minimal inspection API: getShippingLaneQueueLength(...)
  * - Packages returned by unload() are minimal and hide private fields.
  *
  * This file intentionally keeps the runtime deterministic by deriving
@@ -15,7 +15,7 @@ import type {
     WarehouseAPI,
     WarehouseEvent,
     PackagePublic,
-    ShippingLine,
+    ShippingLane,
     ProcessingLineId,
 } from "./types";
 
@@ -72,14 +72,14 @@ export interface WarehouseOptions {
 const INTAKE_CONCURRENCY = 4;
 const INTAKE_CAPACITY = 8;
 const PROCESSING_LINE_CAPACITY = 5;
-const SHIPPING_LINE_CAPACITY = 4;
+const SHIPPING_LANE_CAPACITY = 4;
 
 /** Public, read-only view of the limits so the UI can display them. */
 export const WAREHOUSE_LIMITS = {
     intakeBays: INTAKE_CONCURRENCY,
     intakeBelt: INTAKE_CAPACITY,
     processingLine: PROCESSING_LINE_CAPACITY,
-    shippingLine: SHIPPING_LINE_CAPACITY,
+    shippingLane: SHIPPING_LANE_CAPACITY,
 } as const;
 
 /** Penalties and Error Limits */
@@ -116,9 +116,9 @@ type LocationString =
     | "processingLine0"
     | "processingLine1"
     | "processingLine2"
-    | "shippingLineNorth"
-    | "shippingLineSouth"
-    | "shippingLineInternational"
+    | "shippingLaneNorth"
+    | "shippingLaneSouth"
+    | "shippingLaneInternational"
     | "shipped";
 
 type StatusString =
@@ -133,7 +133,7 @@ type StatusString =
 interface InternalPackage {
     id: number;
     processingTime: number;
-    targetLane: ShippingLine; // private
+    targetLane: ShippingLane; // private
     location: LocationString;
     status: StatusString;
     lineId?: ProcessingLineId;
@@ -168,10 +168,10 @@ function deterministicProcessingTime(id: number, t: WarehouseTimings): number {
     return Math.round((lo + pos * (hi - lo)) / 10) * 10;
 }
 
-const LANES: ShippingLine[] = ["North", "South", "International"];
+const LANES: ShippingLane[] = ["North", "South", "International"];
 
 /** Deterministic shipping lane, independent of the package id pattern. */
-function deterministicTargetLane(id: number): ShippingLine {
+function deterministicTargetLane(id: number): ShippingLane {
     return LANES[hash32(id, 2) % 3];
 }
 
@@ -194,7 +194,7 @@ class Warehouse implements WarehouseAPI {
     private printerPosition: ProcessingLineId = 0; // 0..2
 
     // shipping queues (per lane) and background processors
-    private shippingQueues: Record<ShippingLine, number[]> = {
+    private shippingQueues: Record<ShippingLane, number[]> = {
         North: [],
         South: [],
         International: [],
@@ -210,7 +210,7 @@ class Warehouse implements WarehouseAPI {
 
     // In-flight shipping work (used to detect when the warehouse is idle)
     private pendingShipEnqueues = 0;
-    private shippingInFlight: Record<ShippingLine, boolean> = {
+    private shippingInFlight: Record<ShippingLane, boolean> = {
         North: false,
         South: false,
         International: false,
@@ -338,7 +338,7 @@ class Warehouse implements WarehouseAPI {
                     timestamp: ev.timestamp,
                     packageId: p.packageId,
                     processingLineId: p.processingLineId,
-                    shippingLine: p.shippingLine,
+                    shippingLane: p.shippingLane,
                     metadata: p.metadata,
                 };
                 // Use debug so logs can be toggled by developer tools; fallback to log when debug is unavailable.
@@ -645,7 +645,7 @@ class Warehouse implements WarehouseAPI {
     async print(
         packageId: number,
         processingLineId: ProcessingLineId,
-    ): Promise<ShippingLine> {
+    ): Promise<ShippingLane> {
         if (this.isHalted) {
             throw new Error(`Execution terminated due to excessive errors (${this.errorCount}/${MAX_ERRORS})`);
         }
@@ -751,7 +751,7 @@ class Warehouse implements WarehouseAPI {
             this.emit("PRINT_SUCCESS", {
                 packageId,
                 processingLineId,
-                shippingLine: lane,
+                shippingLane: lane,
                 metadata: {
                     printMs: this.t.printMs,
                     travelMs: travelPenalty,
@@ -774,7 +774,7 @@ class Warehouse implements WarehouseAPI {
         }
     }
 
-    async ship(packageId: number, shippingLine: ShippingLine): Promise<void> {
+    async ship(packageId: number, shippingLane: ShippingLane): Promise<void> {
         if (this.isHalted) {
             throw new Error(`Execution terminated due to excessive errors (${this.errorCount}/${MAX_ERRORS})`);
         }
@@ -791,11 +791,11 @@ class Warehouse implements WarehouseAPI {
             this.emit("ERROR", { packageId, metadata: { message: msg } });
             throw new Error(msg);
         }
-        if (rec.targetLane !== shippingLine) {
-            const msg = `ship: package ${packageId} target lane mismatch (expected=${rec.targetLane} provided=${shippingLine})`;
+        if (rec.targetLane !== shippingLane) {
+            const msg = `ship: package ${packageId} target lane mismatch (expected=${rec.targetLane} provided=${shippingLane})`;
             this.emit("ERROR", {
                 packageId,
-                shippingLine,
+                shippingLane,
                 metadata: { message: msg },
             });
             throw new Error(msg);
@@ -819,23 +819,23 @@ class Warehouse implements WarehouseAPI {
              throw new Error(msg);
         }
 
-        const queue = this.shippingQueues[shippingLine];
+        const queue = this.shippingQueues[shippingLane];
         if (!queue) {
-            const msg = `ship: unknown shippingLine ${shippingLine}`;
+            const msg = `ship: unknown shippingLane ${shippingLane}`;
             this.emit("ERROR", {
                 packageId,
-                shippingLine,
+                shippingLane,
                 metadata: { message: msg },
             });
             throw new Error(msg);
         }
 
         // capacity check
-        if (queue.length >= SHIPPING_LINE_CAPACITY) {
-            const msg = `ship: shippingLine ${shippingLine} is full (${SHIPPING_LINE_CAPACITY})`;
+        if (queue.length >= SHIPPING_LANE_CAPACITY) {
+            const msg = `ship: shippingLane ${shippingLane} is full (${SHIPPING_LANE_CAPACITY})`;
             this.emit("ERROR", {
                 packageId,
-                shippingLine,
+                shippingLane,
                 metadata: { message: msg, queueLength: queue.length },
             });
             await this.sleep(this.t.capacityPenaltyMs);
@@ -853,15 +853,15 @@ class Warehouse implements WarehouseAPI {
 
             queue.push(packageId);
             rec.location =
-                shippingLine === "North"
-                    ? "shippingLineNorth"
-                    : shippingLine === "South"
-                      ? "shippingLineSouth"
-                      : "shippingLineInternational";
+                shippingLane === "North"
+                    ? "shippingLaneNorth"
+                    : shippingLane === "South"
+                      ? "shippingLaneSouth"
+                      : "shippingLaneInternational";
             // rec.status remains "printed" or set to intermediate if desired
             this.emit("SHIP_ENQUEUED", {
                 packageId,
-                shippingLine,
+                shippingLane,
                 metadata: {
                     queueLength: queue.length,
                     enqueueMs: this.t.shipEnqueueMs,
@@ -872,7 +872,7 @@ class Warehouse implements WarehouseAPI {
             if (!this.isHalted) {
                 this.emit("ERROR", {
                     packageId,
-                    shippingLine,
+                    shippingLane,
                     metadata: { message: String(err) },
                 });
             }
@@ -883,8 +883,8 @@ class Warehouse implements WarehouseAPI {
     }
 
     // Minimal inspection helper
-    getShippingLineQueueLength(shippingLine: ShippingLine): number {
-        const q = this.shippingQueues[shippingLine];
+    getShippingLaneQueueLength(shippingLane: ShippingLane): number {
+        const q = this.shippingQueues[shippingLane];
         return q ? q.length : 0;
     }
 
@@ -966,7 +966,7 @@ class Warehouse implements WarehouseAPI {
     // ---------- Shipping background processors ----------
     private startShippingProcessors() {
         this.shippingRunning = true;
-        const schedule = async (line: ShippingLine) => {
+        const schedule = async (line: ShippingLane) => {
             while (this.shippingRunning && !this.isHalted) {
                 const q = this.shippingQueues[line];
                 if (!q || q.length === 0) {
@@ -978,7 +978,7 @@ class Warehouse implements WarehouseAPI {
                 this.shippingInFlight[line] = true;
                 this.emit("SHIP_START", {
                     packageId,
-                    shippingLine: line,
+                    shippingLane: line,
                     metadata: {
                         queueLength: q.length,
                         shipRemoveMs: this.t.shipLoadMs,
@@ -998,7 +998,7 @@ class Warehouse implements WarehouseAPI {
                     this.lastShipTimestamp = performance.now();
                     this.emit("SHIP_COMPLETE", {
                         packageId,
-                        shippingLine: line,
+                        shippingLane: line,
                         metadata: {
                             processedCount: this.processedCount,
                             total: this.packageRecords.size,
@@ -1033,7 +1033,7 @@ class Warehouse implements WarehouseAPI {
                     if (!this.shippingRunning || this.isHalted) return;
                     this.emit("ERROR", {
                         packageId,
-                        shippingLine: line,
+                        shippingLane: line,
                         metadata: { message: String(err) },
                     });
                 } finally {

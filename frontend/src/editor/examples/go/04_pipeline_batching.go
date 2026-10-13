@@ -215,7 +215,7 @@ func printer(w warehouse.Warehouse, f *floor, wg *sync.WaitGroup) {
 		at = line
 
 		// Only this coordinator ships, so check-then-ship can't race here.
-		for w.GetShippingLineQueueLength(lane) >= laneCapacity {
+		for w.GetShippingLaneQueueLength(lane) >= laneCapacity {
 			time.Sleep(20 * time.Millisecond)
 		}
 		if err := w.Ship(it.id, lane); err != nil {

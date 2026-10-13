@@ -35,7 +35,7 @@ var (
 func shipWhenThereIsRoom(w warehouse.Warehouse, id int, lane string) error {
 	laneLocks[lane].Lock()
 	defer laneLocks[lane].Unlock()
-	for w.GetShippingLineQueueLength(lane) >= 4 {
+	for w.GetShippingLaneQueueLength(lane) >= 4 {
 		time.Sleep(50 * time.Millisecond) // the lane is full: wait for the truck
 	}
 	return w.Ship(id, lane)

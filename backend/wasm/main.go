@@ -129,22 +129,22 @@ func (w *WarehouseManager) Print(packageId int, processingLineId int) (string, e
 	return val.String(), nil
 }
 
-func (w *WarehouseManager) Ship(packageId int, shippingLine string) error {
+func (w *WarehouseManager) Ship(packageId int, shippingLane string) error {
 	wh := getWarehouse()
 	if !wh.Truthy() {
 		return errors.New("warehouse runtime not available")
 	}
-	promise := wh.Call("ship", packageId, shippingLine)
+	promise := wh.Call("ship", packageId, shippingLane)
 	_, err := await(promise)
 	return err
 }
 
-func (w *WarehouseManager) GetShippingLineQueueLength(shippingLine string) int {
+func (w *WarehouseManager) GetShippingLaneQueueLength(shippingLane string) int {
 	wh := getWarehouse()
 	if !wh.Truthy() {
 		return 0
 	}
-	return wh.Call("getShippingLineQueueLength", shippingLine).Int()
+	return wh.Call("getShippingLaneQueueLength", shippingLane).Int()
 }
 
 func main() {
@@ -175,8 +175,8 @@ type Warehouse interface {
 	PushToProcessingLine(packageId int, processingLineId int) error
 	ProcessPackage(packageId int, processingLineId int) error
 	Print(packageId int, processingLineId int) (string, error)
-	Ship(packageId int, shippingLine string) error
-	GetShippingLineQueueLength(shippingLine string) int
+	Ship(packageId int, shippingLane string) error
+	GetShippingLaneQueueLength(shippingLane string) int
 }
 `
 
@@ -234,7 +234,7 @@ func runGoSource(this js.Value, args []js.Value) interface{} {
 				"ProcessPackage":             reflect.ValueOf((&WarehouseManager{}).ProcessPackage),
 				"Print":                      reflect.ValueOf((&WarehouseManager{}).Print),
 				"Ship":                       reflect.ValueOf((&WarehouseManager{}).Ship),
-				"GetShippingLineQueueLength": reflect.ValueOf((&WarehouseManager{}).GetShippingLineQueueLength),
+				"GetShippingLaneQueueLength": reflect.ValueOf((&WarehouseManager{}).GetShippingLaneQueueLength),
 			}
 
 			if err := i.Use(apiSymbols); err != nil {
@@ -258,8 +258,8 @@ type Warehouse interface {
 	PushToProcessingLine(packageId int, processingLineId int) error
 	ProcessPackage(packageId int, processingLineId int) error
 	Print(packageId int, processingLineId int) (string, error)
-	Ship(packageId int, shippingLine string) error
-	GetShippingLineQueueLength(shippingLine string) int
+	Ship(packageId int, shippingLane string) error
+	GetShippingLaneQueueLength(shippingLane string) int
 }
 
 type manager struct{}
@@ -291,8 +291,8 @@ func (m *manager) Ship(id int, lane string) error {
 	return warehouse_internal.Ship(id, lane)
 }
 
-func (m *manager) GetShippingLineQueueLength(lane string) int {
-	return warehouse_internal.GetShippingLineQueueLength(lane)
+func (m *manager) GetShippingLaneQueueLength(lane string) int {
+	return warehouse_internal.GetShippingLaneQueueLength(lane)
 }
 
 func NewWarehouseManager() Warehouse {

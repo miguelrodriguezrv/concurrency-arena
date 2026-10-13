@@ -48,17 +48,17 @@ interface WarehouseAPI {
     /**
      * Enqueues a package into the specified shipping lane.
      * @param packageId The ID of the package.
-     * @param shippingLine The name of the shipping lane (e.g., "North", "South").
+     * @param shippingLane The name of the shipping lane (e.g., "North", "South").
      * @returns A promise that resolves when the package is shipped.
      */
-    ship(packageId: number, shippingLine: string): Promise<void>;
+    ship(packageId: number, shippingLane: string): Promise<void>;
 
     /**
      * Returns the current queue length for the requested shipping lane.
-     * @param shippingLine The name of the shipping lane.
+     * @param shippingLane The name of the shipping lane.
      * @returns The current number of packages in that lane's queue.
      */
-    getShippingLineQueueLength(shippingLine: string): number;
+    getShippingLaneQueueLength(shippingLane: string): number;
 }
 
 /**

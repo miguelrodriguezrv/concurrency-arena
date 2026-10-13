@@ -3,7 +3,7 @@ export type Stage =
     | "INTAKE_BELT"
     | "PROCESSING_LINE"
     | "PRINTING"
-    | "SHIPPING_LINE"
+    | "SHIPPING_LANE"
     | "LOADING"
     | "SHIPPED";
 
@@ -11,7 +11,7 @@ export interface VisualPackage {
     id: number;
     stage: Stage;
     lineId?: number; // 0, 1, 2 for processing, or specific string for shipping
-    shippingLine?: string; // 'North', 'South', 'International'
+    shippingLane?: string; // 'North', 'South', 'International'
     queueIndex: number; // Position in the queue to calculate spacing
     unloaderId?: number; // 0 to 3
     isProcessing?: boolean;
@@ -46,7 +46,7 @@ export interface WarehouseEventPayload {
     packageId: number;
     processingLineId?: number;
     laneId?: string;
-    shippingLine?: string;
+    shippingLane?: string;
     metadata?: {
         queueLengthAfter?: number;
         queueLength?: number;

@@ -85,35 +85,35 @@ export function getPackageCoords(pkg: VisualPackage) {
             x = LAYOUT.PROCESSING_BELT_END_X;
             y = LAYOUT.PROCESSING_BELT_Y[pkg.lineId || 0];
             break;
-        case "SHIPPING_LINE":
-            // Queue backwards from the end of the shipping line
+        case "SHIPPING_LANE":
+            // Queue backwards from the end of the shipping lane
             x =
                 LAYOUT.SHIPPING_BELT_END_X -
                 pkg.queueIndex * (LAYOUT.PACKAGE_SIZE + 10);
             if (
-                pkg.shippingLine &&
-                LAYOUT.SHIPPING_BELT_Y[pkg.shippingLine] !== undefined
+                pkg.shippingLane &&
+                LAYOUT.SHIPPING_BELT_Y[pkg.shippingLane] !== undefined
             ) {
-                y = LAYOUT.SHIPPING_BELT_Y[pkg.shippingLine];
+                y = LAYOUT.SHIPPING_BELT_Y[pkg.shippingLane];
             }
             break;
         case "LOADING":
             // Inside the open back of the truck
             x = LAYOUT.TRUCK_X + 22;
             if (
-                pkg.shippingLine &&
-                LAYOUT.SHIPPING_BELT_Y[pkg.shippingLine] !== undefined
+                pkg.shippingLane &&
+                LAYOUT.SHIPPING_BELT_Y[pkg.shippingLane] !== undefined
             ) {
-                y = LAYOUT.SHIPPING_BELT_Y[pkg.shippingLine];
+                y = LAYOUT.SHIPPING_BELT_Y[pkg.shippingLane];
             }
             break;
         case "SHIPPED":
             x = LAYOUT.STAGE_WIDTH + 40; // Slide off to the right
             if (
-                pkg.shippingLine &&
-                LAYOUT.SHIPPING_BELT_Y[pkg.shippingLine] !== undefined
+                pkg.shippingLane &&
+                LAYOUT.SHIPPING_BELT_Y[pkg.shippingLane] !== undefined
             ) {
-                y = LAYOUT.SHIPPING_BELT_Y[pkg.shippingLine];
+                y = LAYOUT.SHIPPING_BELT_Y[pkg.shippingLane];
             }
             break;
     }

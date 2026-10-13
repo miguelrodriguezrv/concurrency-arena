@@ -141,7 +141,7 @@ async function printer() {
         at = line;
 
         // Only this coordinator ships, so check-then-ship can't race here.
-        while (warehouse.getShippingLineQueueLength(lane) >= LANE_CAPACITY) {
+        while (warehouse.getShippingLaneQueueLength(lane) >= LANE_CAPACITY) {
             await sleep(20);
         }
         await warehouse.ship(pkg.id, lane);

@@ -135,8 +135,8 @@ type Warehouse interface {
 	PushToProcessingLine(packageId int, processingLineId int) error
 	ProcessPackage(packageId int, processingLineId int) error
 	Print(packageId int, processingLineId int) (string, error)
-	Ship(packageId int, shippingLine string) error
-	GetShippingLineQueueLength(shippingLine string) int
+	Ship(packageId int, shippingLane string) error
+	GetShippingLaneQueueLength(shippingLane string) int
 }
 `
 
@@ -432,7 +432,7 @@ func getDocFor(name string) string {
 		"ProcessPackage":             "Performs work on a package at the specified processing line. This is a blocking operation.",
 		"Print":                      "Generates a shipping label for the package. Returns the label string.",
 		"Ship":                       "Sends the package to the final shipping lane.",
-		"GetShippingLineQueueLength": "Returns the number of packages currently waiting in the specified shipping lane.",
+		"GetShippingLaneQueueLength": "Returns the number of packages currently waiting in the specified shipping lane.",
 		"Println":                    "Println formats using the default formats for its operands and writes to standard output.",
 		"Printf":                     "Printf formats according to a format specifier and writes to standard output.",
 		"WaitGroup":                  "A WaitGroup waits for a collection of goroutines to finish.",

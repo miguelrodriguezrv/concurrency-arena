@@ -47,11 +47,11 @@ async function runFillLines() {
                 const pkg = processingLines[processingLineId].find((p) => p.id === packageId);
                 if (pkg) pkg.processed = true;
             } else if (ev.type === "PRINT_SUCCESS") {
-                const { packageId, processingLineId, shippingLine } = ev;
+                const { packageId, processingLineId, shippingLane } = ev;
                 const pkg = processingLines[processingLineId].find((p) => p.id === packageId);
                 if (pkg) {
                     pkg.printed = true;
-                    pkg.lane = shippingLine;
+                    pkg.lane = shippingLane;
                 }
             } else if (ev.type === "SHIP_ENQUEUED") {
                 const { packageId } = ev;
@@ -173,7 +173,7 @@ async function runFillLines() {
 
                     // Once printed, wait for shipping capacity and ship it
                     const lane = head.lane;
-                    if (warehouse.getShippingLineQueueLength(lane) < 4) {
+                    if (warehouse.getShippingLaneQueueLength(lane) < 4) {
                         await warehouse.ship(head.id, lane);
                         // Once shipped, the head will be removed from processingLines[i]
                         // by the SHIP_ENQUEUED event listener.
