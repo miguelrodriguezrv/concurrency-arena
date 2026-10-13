@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
@@ -10,6 +11,7 @@ interface ModalProps {
     children: React.ReactNode;
     footer?: React.ReactNode;
     maxWidth?: string;
+    maxHeight?: string;
 }
 
 export default function Modal({
@@ -21,7 +23,18 @@ export default function Modal({
     children,
     footer,
     maxWidth = "max-w-2xl",
+    maxHeight = "max-h-[80vh]",
 }: ModalProps) {
+    // Close on Escape
+    useEffect(() => {
+        if (!open) return;
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === "Escape") onClose();
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [open, onClose]);
+
     if (!open) return null;
 
     const modal = (
@@ -35,7 +48,7 @@ export default function Modal({
 
             {/* Modal Container */}
             <div
-                className={`relative bg-zinc-900 border border-zinc-800 rounded-lg shadow-2xl w-full ${maxWidth} flex flex-col max-h-[80vh] overflow-hidden`}
+                className={`relative bg-zinc-900 border border-zinc-800 rounded-lg shadow-2xl w-full ${maxWidth} flex flex-col ${maxHeight} overflow-hidden`}
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header */}

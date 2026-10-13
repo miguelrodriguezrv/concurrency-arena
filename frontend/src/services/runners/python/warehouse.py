@@ -13,7 +13,10 @@ class Package:
 
     def __init__(self, id, processing_time):
         self.id = id
-        self.processingTime = processing_time # Match JS camelCase for compatibility
+        self.processingTime = processing_time  # Match JS camelCase for compatibility
+
+    def __repr__(self):
+        return f"Package(id={self.id}, processingTime={self.processingTime})"
 
 class Warehouse:
     """The Warehouse API provides methods to interact with the logistics system."""
@@ -42,19 +45,56 @@ class Warehouse:
         """Returns the number of packages currently waiting in a shipping lane."""
         pass
 
-# Map the JS instance methods to the module and the Warehouse class
-# This allows both 'warehouse.unload()' and 'Warehouse.unload(w)' to work.
-methods = [
-    "unload", "pushToProcessingLine", "processPackage",
-    "print", "ship", "getShippingLineQueueLength"
-]
+try:
+    from pyodide.ffi import jsnull as _jsnull
+except Exception:  # older Pyodide: null already converts to None
+    _jsnull = None
 
-for method_name in methods:
-    if hasattr(_js_warehouse, method_name):
-        func = getattr(_js_warehouse, method_name)
-        setattr(warehouse, method_name, func)
-        # Also add to the class for type-hinting support (static-ish mapping)
-        setattr(Warehouse, method_name, func)
+
+def _is_null(v):
+    return v is None or (_jsnull is not None and v is _jsnull)
+
+
+async def _unload():
+    """Unload the next package. Returns a Package, or None when the trucks are empty."""
+    p = await _js_warehouse.unload()
+    if _is_null(p):
+        return None
+    return Package(int(p.id), int(p.processingTime))
+
+
+async def _push(packageId, processingLineId):
+    return await _js_warehouse.pushToProcessingLine(packageId, processingLineId)
+
+
+async def _process(packageId, processingLineId):
+    return await _js_warehouse.processPackage(packageId, processingLineId)
+
+
+async def _print(packageId, processingLineId):
+    return str(await _js_warehouse.print(packageId, processingLineId))
+
+
+async def _ship(packageId, shippingLine):
+    return await _js_warehouse.ship(packageId, shippingLine)
+
+
+def _queue_length(shippingLine):
+    return int(_js_warehouse.getShippingLineQueueLength(shippingLine))
+
+
+# Expose the API on the module, so run(w) receives an object with these methods.
+_api = {
+    "unload": _unload,
+    "pushToProcessingLine": _push,
+    "processPackage": _process,
+    "print": _print,
+    "ship": _ship,
+    "getShippingLineQueueLength": _queue_length,
+}
+for _name, _fn in _api.items():
+    setattr(warehouse, _name, _fn)
+    setattr(Warehouse, _name, staticmethod(_fn))
 
 warehouse.Warehouse = Warehouse
 warehouse.Package = Package

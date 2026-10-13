@@ -122,18 +122,24 @@ export default function ConsoleOutput({ runnerState }: ConsoleOutputProps) {
                     </pre>
                 ) : (
                     <div className="flex flex-col gap-0">
-                        {runnerState.output.map((line, i) => (
-                            <pre
-                                key={i}
-                                className={`p-0 m-0 whitespace-pre-wrap wrap-break-word max-w-full ${
-                                    line.startsWith("ERROR:")
-                                        ? "text-rose-400 font-bold"
-                                        : "text-zinc-300"
-                                }`}
-                            >
-                                {line}
-                            </pre>
-                        ))}
+                        {runnerState.output.map((line, i) => {
+                            // STDERR lines are stored with an "ERROR: " marker
+                            const isErr = line.startsWith("ERROR: ");
+                            const text = isErr ? line.slice(7) : line;
+                            const tone = isErr
+                                ? "text-rose-400"
+                                : text.startsWith("[System]")
+                                  ? "text-zinc-500"
+                                  : "text-zinc-300";
+                            return (
+                                <pre
+                                    key={i}
+                                    className={`p-0 m-0 whitespace-pre-wrap wrap-break-word max-w-full ${tone}`}
+                                >
+                                    {text}
+                                </pre>
+                            );
+                        })}
                         {runnerState.error && (
                             <pre className="p-0 m-0 whitespace-pre-wrap wrap-break-word max-w-full text-rose-500 font-bold">
                                 {runnerState.error}

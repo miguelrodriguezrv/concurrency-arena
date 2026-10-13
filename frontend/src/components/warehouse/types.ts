@@ -4,6 +4,7 @@ export type Stage =
     | "PROCESSING_LINE"
     | "PRINTING"
     | "SHIPPING_LINE"
+    | "LOADING"
     | "SHIPPED";
 
 export interface VisualPackage {
@@ -57,6 +58,8 @@ export interface WarehouseEventPayload {
         processingMs?: number;
         fatal?: boolean;
         message?: string;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        [key: string]: any;
     };
 }
 

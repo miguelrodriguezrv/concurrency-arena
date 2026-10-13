@@ -58,7 +58,7 @@ export const useCodeRunner = () => {
     }, []);
 
     const executeCode = useCallback(
-        (code: string, language: SupportedLanguage) => {
+        (code: string, language: SupportedLanguage, speed = 1) => {
             // Clean up any existing run
             stopRun();
 
@@ -76,6 +76,7 @@ export const useCodeRunner = () => {
                             typeof performance !== "undefined"
                                 ? performance.now()
                                 : Date.now(),
+                        metadata: { speed },
                     },
                 ],
             });
@@ -122,7 +123,7 @@ export const useCodeRunner = () => {
                         setState((s) => ({ ...s, status: "running" }));
                         const startCmd: RunnerCommand = {
                             type: "START_RUN",
-                            payload: { code },
+                            payload: { code, speed },
                         };
                         worker.postMessage(startCmd);
                         break;
@@ -149,16 +150,37 @@ export const useCodeRunner = () => {
                         }));
                         break;
                     case "WAREHOUSE_EVENT": {
-                        const payload = event.payload as any;
+                        const raw = event.payload as {
+                            type?: string;
+                            timestamp?: number;
+                            metadata?: Record<string, number>;
+                        } | null;
+                        // Workers send epoch-based timestamps; convert to this
+                        // thread's performance.now() clock so they can be compared
+                        // with locally generated timestamps (STOP_RUN, live timer).
+                        const payload =
+                            raw && typeof raw.timestamp === "number"
+                                ? { ...raw, timestamp: raw.timestamp - performance.timeOrigin }
+                                : raw;
+                        if (payload?.type === "HEARTBEAT") break;
                         // Capture definitive final metrics from the COMPLETED event
                         if (payload?.type === "COMPLETED") {
                             setState((s) => ({
                                 ...s,
                                 finalMetrics: {
-                                    finalUPM: payload.metadata?.finalUPM || 0,
-                                    finalDuration: payload.metadata?.finalDuration || 0,
+                                    finalUPM: payload?.metadata?.finalUPM || 0,
+                                    finalDuration: payload?.metadata?.finalDuration || 0,
                                 },
                             }));
+                            // Every package shipped. If the student's code never
+                            // returns (e.g. workers still waiting), end the run anyway.
+                            setTimeout(() => {
+                                if (workerRef.current === worker) {
+                                    worker.terminate();
+                                    workerRef.current = null;
+                                    setState((s) => ({ ...s, status: "complete" }));
+                                }
+                            }, 1500);
                         }
                         // Append the forwarded WarehouseEvent payload for the visualizer to consume.
                         setState((s) => ({
@@ -181,6 +203,14 @@ export const useCodeRunner = () => {
                             ...s,
                             status: "error",
                             error: event.payload as string,
+                            warehouseEvents: [
+                                ...s.warehouseEvents,
+                                {
+                                    type: "RUN_ERROR",
+                                    timestamp: performance.now(),
+                                    metadata: { message: String(event.payload) },
+                                },
+                            ],
                         }));
                         worker.terminate();
                         workerRef.current = null;
@@ -193,6 +223,14 @@ export const useCodeRunner = () => {
                     ...s,
                     status: "error",
                     error: `Worker crashed: ${err.message}`,
+                    warehouseEvents: [
+                        ...s.warehouseEvents,
+                        {
+                            type: "RUN_ERROR",
+                            timestamp: performance.now(),
+                            metadata: { message: `Worker crashed: ${err.message}` },
+                        },
+                    ],
                 }));
                 worker.terminate();
                 workerRef.current = null;

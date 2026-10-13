@@ -1,4 +1,6 @@
 import { createWarehouse } from "@/lib/warehouse/warehouse";
+import type { WarehouseAPI } from "@/lib/warehouse/types";
+import { forwardWarehouseEvents, settleWarehouse } from "./warehouseBridge";
 import type {
     RunnerEvent,
     RunnerCommand,
@@ -126,7 +128,7 @@ const setupGoConsoleProxy = () => {
     };
 };
 
-const runGoCode = async (code: string) => {
+const runGoCode = async (code: string, warehouse: WarehouseAPI | null) => {
     try {
         await initExecutorWasm();
 
@@ -139,10 +141,9 @@ const runGoCode = async (code: string) => {
         // This will block until the student's code (including go routines) completes
         await self.runGoSource(code);
 
-        postEvent({
-            type: "STDOUT",
-            payload: `\n[System] Run finished`,
-        });
+        if (warehouse) {
+            await settleWarehouse(warehouse, postEvent);
+        }
 
         postEvent({ type: "RUN_COMPLETE" });
     } catch (error) {
@@ -165,67 +166,27 @@ self.onmessage = async (e: MessageEvent<RunnerCommand>) => {
                 break;
             }
             case "START_RUN": {
-                const { code, deck } = payload as StartRunPayload & {
+                const { code, deck, speed } = payload as StartRunPayload & {
                     deck?: unknown;
                 };
                 setupGoConsoleProxy();
 
-                let warehouseUnsub: (() => void) | null = null;
-                let warehouseInstance: any = null;
+                let warehouseInstance: WarehouseAPI | null = null;
                 try {
                     const runDeck = Array.isArray(deck) ? deck : undefined;
-                    warehouseInstance = createWarehouse(runDeck);
+                    warehouseInstance = createWarehouse(runDeck, { speed });
 
                     // Expose to the Go WASM runtime via global self
                     (self as any).__warehouse = warehouseInstance;
-
-                    if (
-                        warehouseInstance &&
-                        typeof warehouseInstance.onEvent === "function"
-                    ) {
-                        warehouseUnsub = warehouseInstance.onEvent(
-                            (ev: any) => {
-                                postEvent({
-                                    type: "WAREHOUSE_EVENT",
-                                    payload: ev,
-                                });
-                                try {
-                                    if (ev && ev.type !== "HEARTBEAT") {
-                                        const pid =
-                                            ev.packageId !== undefined
-                                                ? String(ev.packageId)
-                                                : "-";
-                                        const meta = ev.metadata
-                                            ? ` ${JSON.stringify(ev.metadata)}`
-                                            : "";
-                                        const msg = `[Warehouse] ${ev.type} pkg=${pid} ${meta}`;
-                                        if (ev.type === "ERROR") {
-                                            postEvent({
-                                                type: "STDERR",
-                                                payload: msg,
-                                            });
-                                        } else {
-                                            postEvent({
-                                                type: "STDOUT",
-                                                payload: msg,
-                                            });
-                                        }
-                                    }
-                                } catch {
-                                    // ignore
-                                }
-                            },
-                        ) as any;
-                    }
+                    forwardWarehouseEvents(warehouseInstance, postEvent);
                 } catch {
                     // ignore
                 }
 
-                await runGoCode(code);
+                await runGoCode(code, warehouseInstance);
 
                 // Cleanup
                 try {
-                    if (warehouseUnsub) warehouseUnsub();
                     delete (self as any).__warehouse;
                     if (warehouseInstance?.dispose) warehouseInstance.dispose();
                 } catch {

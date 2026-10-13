@@ -41,6 +41,8 @@ export interface WarehouseEvent {
     | "SHIP_COMPLETE"
     | "PENALTY"
     | "ERROR"
+    | "COMPLETED"
+    | "INCOMPLETE"
     | "HEARTBEAT";
 
     // Optional identifiers to help consumers correlate events
@@ -75,43 +77,27 @@ export interface PackagePublic {
  */
 export interface WarehouseAPI {
     /**
-     * Intake: unloads the next package from the internal deck.
-     * - Simulated delay: 200 ms.
-     * - Constraint: max 4 concurrent unload() calls — otherwise throws CapacityError.
-     * - Returns a minimal package object containing only public fields, or null if no more packages are available.
+     * Unload the next package from the trucks. Max 4 concurrent calls; the
+     * intake belt (unloaded + unloading, not yet pushed) holds 8.
+     * Resolves to null when the trucks are empty. Timings: see DEFAULT_TIMINGS.
      */
     unload(): Promise<PackagePublic | null>;
 
-    /**
-     * Induction: push a previously-unloaded package onto a ProcessingLine.
-     * - Simulated delay: 50 ms.
-     * - Constraint: ProcessingLine queue capacity (5). If full, throws CapacityError.
-     * - Validation: `packageId` must refer to a package in intake/unloaded state; otherwise throws ValidationError.
-     */
+    /** Move a package from the intake belt onto line 0, 1 or 2 (max 5 per line). */
     pushToProcessingLine(
         packageId: number,
         processingLineId: ProcessingLineId,
     ): Promise<void>;
 
-    /**
-     * Processing: process a package at the head of the specified ProcessingLine.
-     * - Simulated delay: pkg.processingTime ms.
-     * - Constraints:
-     *   - The package must be at the head of the processing line queue; otherwise throws ValidationError.
-     *   - The processing station must be free; otherwise throws ResourceBusyError.
-     */
+    /** Process any package on its line; one package at a time per line. */
     processPackage(
         packageId: number,
         processingLineId: ProcessingLineId,
     ): Promise<void>;
 
     /**
-     * Labeling: print a label for the package.
-     * - Simulated base delay: 100 ms.
-     * - Travel penalty: +500 ms if the printer moves from its current line to processingLineId.
-     * - Constraint: Global singleton printer; if busy, throws ResourceBusyError.
-     * - Validation: package must be processed and on the specified processing line; otherwise throws ValidationError.
-     * - Returns the ShippingLine assigned to the package (this reveals the package's private targetLane).
+     * Label the processed package at the head (end) of the line. Single printer;
+     * travel penalty if it has to move. Returns the package's shipping lane.
      */
     print(
         packageId: number,
@@ -119,19 +105,12 @@ export interface WarehouseAPI {
     ): Promise<ShippingLine>;
 
     /**
-     * Shipping: enqueue a package into the specified ShippingLine.
-     * - Quick enqueue action: small internal delay; ship() resolves after enqueue.
-     * - Constraint: ShippingLine capacity = 5. If full, throws CapacityError.
-     * - Validation: package must have been printed and the provided shippingLine must match the package's target lane; otherwise throws HandshakeError.
-     * - Background: Warehouse internally removes (ships) one package from each ShippingLine every 500 ms; ship() does not wait for that removal.
+     * Ship the printed package at the head of its line into its lane (max 5
+     * waiting). Resolves once enqueued; lanes load trucks in the background.
      */
     ship(packageId: number, shippingLine: ShippingLine): Promise<void>;
 
-    /**
-     * Minimal read-only inspection helper:
-     * Returns the current queue length for the requested ShippingLine (0..capacity).
-     * Students can use this to avoid enqueuing into a full lane (TOCTOU races still possible).
-     */
+    /** Current queue length of a shipping lane (0..5). Optimistic: may change. */
     getShippingLineQueueLength(shippingLine: ShippingLine): number;
 
     /**
@@ -146,4 +125,18 @@ export interface WarehouseAPI {
      * provide this method so consumers can request a graceful shutdown.
      */
     dispose?: () => void;
+
+    /**
+     * Runner-only: wait for in-flight work to finish after the student's code
+     * returns, then report whether every package shipped.
+     */
+    settle?: (timeoutMs?: number) => Promise<{
+        total: number;
+        shipped: number;
+        stranded: number[];
+        stuck: number[];
+        notUnloaded: number;
+        complete: boolean;
+        halted: boolean;
+    }>;
 }

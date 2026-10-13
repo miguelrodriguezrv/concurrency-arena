@@ -47,6 +47,8 @@ export interface RunnerCommand {
 
 export interface StartRunPayload {
     code: string;
+    /** Simulation speed multiplier (1 = normal). */
+    speed?: number;
     // Optional deterministic deck payload (worker may generate its own if omitted)
     deck?: unknown;
 }

@@ -1,4 +1,5 @@
 import { createWarehouse } from "@/lib/warehouse/warehouse";
+import { forwardWarehouseEvents, settleWarehouse } from "./warehouseBridge";
 import type {
     RunnerEvent,
     RunnerCommand,
@@ -117,7 +118,7 @@ const initPyodide = async () => {
     }
 };
 
-const runPythonCode = async (code: string, deck?: unknown) => {
+const runPythonCode = async (code: string, deck?: unknown, speed = 1) => {
     try {
         await initPyodide();
 
@@ -127,37 +128,12 @@ const runPythonCode = async (code: string, deck?: unknown) => {
         });
 
         let warehouseInstance: any = null;
-        let warehouseUnsub: (() => void) | null = null;
         try {
             warehouseInstance = createWarehouse(
                 Array.isArray(deck) ? deck : undefined,
+                { speed },
             );
-            if (
-                warehouseInstance &&
-                typeof warehouseInstance.onEvent === "function"
-            ) {
-                warehouseUnsub = warehouseInstance.onEvent((ev: any) => {
-                    postEvent({ type: "WAREHOUSE_EVENT", payload: ev });
-                    try {
-                        if (ev && ev.type !== "HEARTBEAT") {
-                            const pid =
-                                ev.packageId !== undefined
-                                    ? String(ev.packageId)
-                                    : "-";
-                            const meta = ev.metadata
-                                ? ` ${JSON.stringify(ev.metadata)}`
-                                : "";
-                            const msg = `[Warehouse] ${ev.type} pkg=${pid}${meta}`;
-                            postEvent({
-                                type: ev.type === "ERROR" ? "STDERR" : "STDOUT",
-                                payload: msg,
-                            });
-                        }
-                    } catch {
-                        // ignore
-                    }
-                }) as any;
-            }
+            forwardWarehouseEvents(warehouseInstance, postEvent);
             try {
                 // Register the JS instance under a private name first
                 // We'll then wrap it in a real Python module for better type support
@@ -210,18 +186,11 @@ async def invoke_entrypoint():
 await invoke_entrypoint()
         `);
 
-        postEvent({
-            type: "STDOUT",
-            payload: `\n[System] Python Run finished.`,
-        });
-        await new Promise((r) => setTimeout(r, 10));
+        if (warehouseInstance) {
+            await settleWarehouse(warehouseInstance, postEvent);
+        }
         postEvent({ type: "RUN_COMPLETE" });
 
-        try {
-            if (warehouseUnsub) warehouseUnsub();
-        } catch {
-            // swallow
-        }
         try {
             if (warehouseInstance?.dispose) warehouseInstance.dispose();
         } catch {
@@ -241,8 +210,8 @@ self.onmessage = async (e: MessageEvent<RunnerCommand>) => {
             break;
         }
         case "START_RUN": {
-            const { code, deck } = payload as StartRunPayload;
-            await runPythonCode(code, deck);
+            const { code, deck, speed } = payload as StartRunPayload;
+            await runPythonCode(code, deck, speed);
             break;
         }
         case "GET_COMPLETIONS": {

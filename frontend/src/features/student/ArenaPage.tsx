@@ -20,6 +20,7 @@ import {
     setCurrentLanguage,
 } from "@/lib/storage";
 import { WarehouseVisualizer } from "@/components/warehouse/WarehouseVisualizer";
+import RunResultCard from "@/components/warehouse/RunResultCard";
 import { SplitPane, Pane } from "react-split-pane";
 
 export default function ArenaPage() {
@@ -53,6 +54,16 @@ export default function ArenaPage() {
         if (initialLanguage === "python") return DEFAULT_PYTHON_CODE;
         return DEFAULT_JS_CODE;
     });
+
+    // Simulation speed (persisted per browser)
+    const [speed, setSpeed] = useState<number>(() => {
+        const v = Number(localStorage.getItem("arena_speed"));
+        return v > 0 ? v : 1;
+    });
+    const handleSpeedChange = (s: number) => {
+        setSpeed(s);
+        localStorage.setItem("arena_speed", String(s));
+    };
 
     // Split pane state (react-split-pane).
     const [leftSize, setLeftSize] = useState<string | number>("55%");
@@ -204,14 +215,23 @@ export default function ArenaPage() {
     }, [subscribeToAdminCommands, session, language]);
 
     const events = (runnerState.warehouseEvents || []) as import("@/components/warehouse/types").WarehouseEventPayload[];
-    const { throughputUnitsPerMin, isComplete, metrics } = useWarehouseMetrics(events);
+    const runMetrics = useWarehouseMetrics(events);
+    const { throughputUnitsPerMin, isComplete, metrics, outcome } = runMetrics;
     const hasSubmittedScore = useRef(false);
 
-    // Reset score submission flag when a new run starts
+    // Result card: personal best before this run (to detect a new best) and dismissal.
+    const personalBests = useStore((state) => state.personalBests);
+    const previousBestRef = useRef(0);
+    const [resultDismissed, setResultDismissed] = useState(false);
+
+    // Reset per-run state when a new run starts
     useEffect(() => {
-        if (runnerState.status === "running") {
+        if (runnerState.status === "booting") {
             hasSubmittedScore.current = false;
+            previousBestRef.current = personalBests[language] || 0;
+            setResultDismissed(false);
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [runnerState.status]);
 
     // Throttle Metric Pulse to instructor (Live UPM & Errors)
@@ -235,17 +255,16 @@ export default function ArenaPage() {
         return () => clearInterval(pulseTimer);
     }, [runnerState.status, sendMessage, !!session]);
 
-    // Handle Score Submission
+    // Handle Score Submission: only runs where every package shipped count.
     useEffect(() => {
         if (!session) return;
 
-        // Use definitive metrics from runnerState.finalMetrics if available
         const finalUPM = runnerState.finalMetrics?.finalUPM || 0;
         const finalDuration = runnerState.finalMetrics?.finalDuration || 0;
 
-        if (isComplete && !metrics.fatalError && finalUPM > 0 && !hasSubmittedScore.current) {
+        if (outcome === "complete" && finalUPM > 0 && !hasSubmittedScore.current) {
             hasSubmittedScore.current = true;
-            
+
             // 1. Update Personal Best (local storage + state)
             updatePersonalBest(language, finalUPM);
 
@@ -258,13 +277,13 @@ export default function ArenaPage() {
                 timestamp: Date.now()
             });
         }
-    }, [isComplete, metrics.fatalError, runnerState.finalMetrics, language, sendMessage, session?.name, updatePersonalBest]);
+    }, [outcome, runnerState.finalMetrics, language, sendMessage, session?.name, updatePersonalBest]);
 
     const handleRunLocal = () => {
         if (runnerState.status === "running") {
             stopRun();
         } else {
-            executeCode(code, language);
+            executeCode(code, language, speed);
         }
     };
 
@@ -287,15 +306,17 @@ export default function ArenaPage() {
     };
 
     // Collapse / expand left pane (visualizer + console).
-    const toggleLeftCollapsed = () => {
-        if (leftCollapsed) {
-            // expand: restore default width
-            setLeftSize("55%");
-            setLeftCollapsed(false);
-        } else {
-            // collapse: hide left pane
-            setLeftSize(0);
-            setLeftCollapsed(true);
+    // leftSize keeps the last dragged width, so expanding restores it.
+    const toggleLeftCollapsed = () => setLeftCollapsed((c) => !c);
+
+    // Remember the dragged width (as a percentage, so it scales with the
+    // window). Without this, any re-render (theme, speed, runs...) resets
+    // the panes to the initial size.
+    const handleSplitResizeEnd = (sizes: number[]) => {
+        if (leftCollapsed) return;
+        const total = sizes.reduce((a, b) => a + b, 0);
+        if (total > 0 && sizes[0] > 0) {
+            setLeftSize(`${(sizes[0] / total) * 100}%`);
         }
     };
 
@@ -338,6 +359,8 @@ export default function ArenaPage() {
                 onLogout={handleLogout}
                 onToggleVisualizer={toggleLeftCollapsed}
                 visualizerHidden={leftCollapsed}
+                speed={speed}
+                onSpeedChange={handleSpeedChange}
             />
             <IncomingDiffModal
                 open={diffOpen}
@@ -355,6 +378,7 @@ export default function ArenaPage() {
                     <SplitPane
                         direction="horizontal"
                         resizable={!leftCollapsed}
+                        onResizeEnd={handleSplitResizeEnd}
                         dividerClassName="w-4 -mx-2 flex items-center justify-center bg-transparent hover:bg-blue-600 cursor-col-resize transition-colors"
                         dividerStyle={{ width: 12 }}
                     >
@@ -367,16 +391,30 @@ export default function ArenaPage() {
                             <div className="flex flex-col gap-4 min-h-0 h-full">
                                 <div
                                     className={
-                                        "flex-2 min-h-0 relative overflow-hidden rounded border border-zinc-800 " +
+                                        "shrink-0 max-h-[65%] min-h-0 relative overflow-hidden rounded border border-zinc-800 " +
                                         (leftCollapsed
                                             ? "opacity-0 pointer-events-none"
                                             : "")
                                     }
+                                    style={{ aspectRatio: "880 / 470" }}
                                 >
-                                    <WarehouseVisualizer
-                                        events={
-                                            runnerState.warehouseEvents as unknown as import("@/components/warehouse/types").WarehouseEventPayload[]
-                                        }
+                                    <WarehouseVisualizer events={events} />
+                                    <RunResultCard
+                                        open={isComplete && !resultDismissed}
+                                        outcome={outcome}
+                                        elapsedMs={runMetrics.elapsedMs}
+                                        upm={throughputUnitsPerMin}
+                                        shipped={metrics.shippedCount}
+                                        total={runMetrics.totalPackages}
+                                        errors={metrics.errorCount}
+                                        printerEfficiency={metrics.printerEfficiency}
+                                        stuck={runMetrics.stuck}
+                                        notUnloaded={runMetrics.notUnloaded}
+                                        message={runMetrics.endMessage}
+                                        previousBest={previousBestRef.current}
+                                        onClose={() => setResultDismissed(true)}
+                                        onRunAgain={() => executeCode(code, language, speed)}
+                                        speed={runMetrics.speed}
                                     />
                                 </div>
 

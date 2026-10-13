@@ -8,11 +8,50 @@ export interface WarehouseMetrics {
     intakeEfficiency: number;
     printerEfficiency: number;
     printerMoveMs: number;
+    printerPrintMs: number;
 }
 
 /**
- * Utility to find the last index of an element matching a predicate.
+ * How the current run ended (or that it is still going).
+ * - complete:   every package shipped
+ * - incomplete: student code returned but some packages never shipped
+ * - fatal:      too many rejected calls, the warehouse shut down
+ * - crashed:    the student code threw / the runner crashed
+ * - stopped:    the user pressed Stop
  */
+export type RunOutcome =
+    | "idle"
+    | "running"
+    | "complete"
+    | "incomplete"
+    | "fatal"
+    | "crashed"
+    | "stopped";
+
+export type UseWarehouseMetricsResult = {
+    elapsedMs: number;
+    startTs: number;
+    stopTs: number;
+    isComplete: boolean;
+    outcome: RunOutcome;
+    /** Simulation speed of the current run (1 = normal). */
+    speed: number;
+    totalPackages: number;
+    stranded: number[];
+    /** Unloaded but never shipped. */
+    stuck: number[];
+    /** Never unloaded from the trucks. */
+    notUnloaded: number;
+    finalUPM: number;
+    endMessage?: string;
+    currentRunEvents: WarehouseEventPayload[];
+    metrics: WarehouseMetrics;
+    throughputUnitsPerMin: number;
+    formatTime: (ms: number) => string;
+};
+
+const DEFAULT_TOTAL = 100;
+
 function findLastIndex<T>(arr: T[], predicate: (item: T) => boolean): number {
     for (let i = arr.length - 1; i >= 0; i--) {
         if (predicate(arr[i])) return i;
@@ -20,120 +59,129 @@ function findLastIndex<T>(arr: T[], predicate: (item: T) => boolean): number {
     return -1;
 }
 
-export type UseWarehouseMetricsResult = {
-    elapsedMs: number;
-    startTs: number;
-    stopTs: number;
-    isComplete: boolean;
-    currentRunEvents: WarehouseEventPayload[];
-    metrics: WarehouseMetrics;
-    throughputUnitsPerMin: number;
-    formatTime: (ms: number) => string;
-};
-
 /**
- * useWarehouseMetrics
+ * Single source of truth for derived run metrics.
  *
- * Extracted from the previous `WarehouseMetrics` component so multiple UI
- * surfaces can re-use the same, single source-of-truth for derived metrics.
- *
- * Behavior:
- * - Finds the most recent START_RUN event and treats subsequent events as the
- *   active run.
- * - Maintains an independent wall-clock `elapsedMs` timer that updates every
- *   100ms while the run is active (stops when run is complete).
- * - Computes the same architectural metrics as before: shippedCount, errorCount,
- *   intakeEfficiency (time-weighted average active unloaders), printerEfficiency,
- *   and printerMoveMs travel penalty.
+ * All timestamps are on the main thread's performance.now() clock (worker
+ * timestamps are converted in useCodeRunner). The clock starts at the first
+ * unload — the same moment the warehouse uses for the official score — and
+ * when the run completes the official duration from the warehouse is used,
+ * so the on-screen time always matches the submitted result.
  */
 export default function useWarehouseMetrics(
     events: WarehouseEventPayload[] = [],
 ): UseWarehouseMetricsResult {
-    const [elapsedMs, setElapsedMs] = useState<number>(0);
+    const [now, setNow] = useState<number>(() => performance.now());
 
-    // 1. Identify the current run lifecycle boundaries using START_RUN and STOP_RUN
-    const { startTs, stopTs, isComplete, currentRunEvents } = useMemo(() => {
+    // 1. Run boundaries and outcome
+    const run = useMemo(() => {
         const startIdx = findLastIndex(events, (e) => e.type === "START_RUN");
-
         if (startIdx === -1) {
             return {
+                started: false,
+                speed: 1,
                 startTs: 0,
                 stopTs: 0,
-                isComplete: false,
-                currentRunEvents: [] as WarehouseEventPayload[],
+                outcome: "idle" as RunOutcome,
+                relevant: [] as WarehouseEventPayload[],
+                finalDuration: undefined as number | undefined,
+                finalUPM: 0,
+                stranded: [] as number[],
+                stuck: [] as number[],
+                notUnloaded: 0,
+                total: DEFAULT_TOTAL,
+                endMessage: undefined as string | undefined,
             };
         }
 
         const relevant = events.slice(startIdx + 1);
-        const startEvent = events[startIdx];
-
-        const stopEvent = relevant.find((e) => e.type === "STOP_RUN");
-        const fatalErrorEvent = relevant.find(
+        const speed = Number(events[startIdx].metadata?.speed) || 1;
+        const firstUnload = relevant.find((e) => e.type === "INTAKE_START");
+        const completed = relevant.find((e) => e.type === "COMPLETED");
+        const incomplete = relevant.find((e) => e.type === "INCOMPLETE");
+        const fatal = relevant.find(
             (e) => e.type === "ERROR" && e.metadata?.fatal,
         );
-        const completeEvent = relevant.find(
-            (e) => e.type === "SHIP_COMPLETE" && e.packageId === 99,
-        );
+        const crashed = relevant.find((e) => e.type === "RUN_ERROR");
+        const stopped = relevant.find((e) => e.type === "STOP_RUN");
 
+        let total = DEFAULT_TOTAL;
+        for (let i = relevant.length - 1; i >= 0; i--) {
+            const t = relevant[i].metadata?.total;
+            if (typeof t === "number") {
+                total = t;
+                break;
+            }
+        }
+
+        let outcome: RunOutcome = "running";
+        let endEvent: WarehouseEventPayload | undefined;
+        let endMessage: string | undefined;
+        if (completed) {
+            outcome = "complete";
+            endEvent = completed;
+        } else if (fatal) {
+            outcome = "fatal";
+            endEvent = fatal;
+            endMessage = fatal.metadata?.message;
+        } else if (crashed) {
+            outcome = "crashed";
+            endEvent = crashed;
+            endMessage = crashed.metadata?.message;
+        } else if (incomplete) {
+            outcome = "incomplete";
+            endEvent = incomplete;
+        } else if (stopped) {
+            outcome = "stopped";
+            endEvent = stopped;
+        }
+
+        const startTs = firstUnload?.timestamp ?? 0;
+        const finalDuration =
+            typeof completed?.metadata?.finalDuration === "number"
+                ? completed.metadata.finalDuration
+                : undefined;
         const stopTs =
-            stopEvent?.timestamp ||
-            fatalErrorEvent?.timestamp ||
-            completeEvent?.timestamp ||
-            0;
+            finalDuration !== undefined && startTs
+                ? startTs + finalDuration
+                : endEvent?.timestamp ?? 0;
 
         return {
-            startTs: startEvent.timestamp || 0,
+            started: true,
+            speed,
+            startTs,
             stopTs,
-            isComplete: !!stopEvent || !!fatalErrorEvent || !!completeEvent,
-            currentRunEvents: relevant,
+            outcome,
+            relevant,
+            finalDuration,
+            finalUPM: completed?.metadata?.finalUPM ?? 0,
+            stranded: (incomplete?.metadata?.stranded as number[]) ?? [],
+            stuck: (incomplete?.metadata?.stuck as number[]) ?? [],
+            notUnloaded: (incomplete?.metadata?.notUnloaded as number) ?? 0,
+            total,
+            endMessage,
         };
     }, [events]);
 
-    // 2. Independent Wall-Clock Timer (Refreshing every 100ms)
+    const isComplete = run.outcome !== "running" && run.outcome !== "idle";
+
+    // 2. Live clock while running
     useEffect(() => {
-        // Use timeouts for immediate updates to avoid synchronous setState calls
-        // inside the effect body which some linters/runtime checks flag as
-        // cascading renders. We still use the interval for steady updates.
-        let immediateTimer: ReturnType<typeof setTimeout> | null = null;
-        let intervalId: ReturnType<typeof setInterval> | null = null;
+        if (run.outcome !== "running" || !run.startTs) return;
+        const id = setInterval(() => setNow(performance.now()), 100);
+        return () => clearInterval(id);
+    }, [run.outcome, run.startTs]);
 
-        if (startTs === 0) {
-            // schedule async update to set elapsed to zero
-            setElapsedMs(0);
-            return;
-        }
+    // Elapsed time is shown in game time (real time × speed) so results are
+    // comparable no matter which speed the run used.
+    let elapsedMs = 0;
+    if (run.startTs) {
+        if (run.finalDuration !== undefined) elapsedMs = run.finalDuration;
+        else if (isComplete) elapsedMs = Math.max(0, run.stopTs - run.startTs) * run.speed;
+        else elapsedMs = Math.max(0, now - run.startTs) * run.speed;
+    }
 
-        if (isComplete) {
-            const final = Math.max(0, stopTs - startTs);
-            // schedule async update for final elapsed time
-            setElapsedMs(final);
-            return;
-        }
-
-        // Establish an asynchronous baseline value (avoid waiting for first tick)
-        const nowInitial =
-            typeof performance !== "undefined" ? performance.now() : Date.now();
-        const initial = Math.max(0, nowInitial - startTs);
-        setElapsedMs(initial);
-
-        // Live-updating timer (every 100ms) but only write when the computed
-        // value actually changes to avoid unnecessary renders.
-        intervalId = setInterval(() => {
-            const now =
-                typeof performance !== "undefined"
-                    ? performance.now()
-                    : Date.now();
-            const computed = Math.max(0, now - startTs);
-            setElapsedMs(computed);
-        }, 100);
-
-        return () => {
-            if (intervalId) clearInterval(intervalId);
-            if (immediateTimer) clearTimeout(immediateTimer);
-        };
-    }, [startTs, isComplete, stopTs]);
-
-    // 3. Architectural Metrics (calculated from events since START_RUN)
+    // 3. Derived metrics
     const metrics = useMemo<WarehouseMetrics>(() => {
         let shippedCount = 0;
         let errorCount = 0;
@@ -142,61 +190,43 @@ export default function useWarehouseMetrics(
         let printerPrintMs = 0;
         let activeUnloaders = 0;
         let weightedUnloaderSum = 0;
+        let lastTs = run.startTs;
 
-        // Start tracking time from the start of the run (START_RUN event)
-        let lastIntakeUpdateTime = startTs;
-
-        for (const ev of currentRunEvents) {
-            const ts = ev.timestamp || startTs;
-
-            // 1. Track weighted concurrency up to this event
-            if (ts > lastIntakeUpdateTime) {
-                weightedUnloaderSum +=
-                    activeUnloaders * (ts - lastIntakeUpdateTime);
+        for (const ev of run.relevant) {
+            const ts = ev.timestamp ?? lastTs;
+            if (run.startTs && ts > lastTs) {
+                weightedUnloaderSum += activeUnloaders * (ts - lastTs);
+                lastTs = ts;
             }
-            lastIntakeUpdateTime = ts;
-
-            // 2. Update state based on event type
-            if (ev.type === "SHIP_COMPLETE") shippedCount++;
-            if (ev.type === "ERROR") {
-                errorCount++;
-                if (ev.metadata?.fatal) fatalError = true;
-            }
-
-            if (ev.type === "INTAKE_START") {
-                activeUnloaders++;
-            } else if (ev.type === "INTAKE_DONE") {
-                activeUnloaders = Math.max(0, activeUnloaders - 1);
-            }
-
-            if (ev.type === "PRINTER_MOVE_START") {
-                printerMoveMs += ev.metadata?.travelMs || 0;
-            }
-            if (ev.type === "PRINT_START") {
-                printerPrintMs += ev.metadata?.printMs || 100;
+            switch (ev.type) {
+                case "SHIP_COMPLETE":
+                    shippedCount++;
+                    break;
+                case "ERROR":
+                    errorCount++;
+                    if (ev.metadata?.fatal) fatalError = true;
+                    break;
+                case "INTAKE_START":
+                    activeUnloaders++;
+                    break;
+                case "INTAKE_DONE":
+                    activeUnloaders = Math.max(0, activeUnloaders - 1);
+                    break;
+                case "PRINTER_MOVE_START":
+                    printerMoveMs += ev.metadata?.travelMs || 0;
+                    break;
+                case "PRINT_START":
+                    printerPrintMs += ev.metadata?.printMs || 0;
+                    break;
             }
         }
 
-        // 3. Account for current intake concurrency up to the current wall-clock "now"
-        const finalTsForWeight = isComplete
-            ? stopTs || lastIntakeUpdateTime
-            : startTs + elapsedMs;
-        if (finalTsForWeight > lastIntakeUpdateTime) {
-            weightedUnloaderSum +=
-                activeUnloaders * (finalTsForWeight - lastIntakeUpdateTime);
-        }
-
-        const totalTime = isComplete ? stopTs - startTs : elapsedMs;
-        // Only show efficiency after we have a meaningful sample size (e.g. 5000ms)
-        // to avoid mathematical spikes while the worker is booting up.
+        const totalTime = elapsedMs / run.speed; // real ms, like the event timestamps
         const intakeEfficiency =
             totalTime > 5000 ? weightedUnloaderSum / totalTime : 0;
-
         const totalPrinterTime = printerPrintMs + printerMoveMs;
         const printerEfficiency =
-            totalPrinterTime > 0
-                ? (printerPrintMs / totalPrinterTime) * 100
-                : 0;
+            totalPrinterTime > 0 ? (printerPrintMs / totalPrinterTime) * 100 : 0;
 
         return {
             shippedCount,
@@ -205,29 +235,36 @@ export default function useWarehouseMetrics(
             intakeEfficiency,
             printerEfficiency,
             printerMoveMs,
+            printerPrintMs,
         };
-    }, [currentRunEvents, isComplete, startTs, stopTs, elapsedMs]);
+        // elapsedMs intentionally excluded while running to avoid recomputing every tick
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [run, isComplete]);
 
-    // 4. Throughput Calculation
+    // 4. Throughput: official value once complete, live estimate otherwise
     const throughputUnitsPerMin = useMemo(() => {
+        if (run.outcome === "complete" && run.finalUPM) return run.finalUPM;
         if (elapsedMs <= 0 || metrics.shippedCount === 0) return 0;
-        const minutes = elapsedMs / 60000;
-        const raw = metrics.shippedCount / minutes;
-        // Truncate to 1 decimal to match definitive warehouse calculation
+        const raw = metrics.shippedCount / (elapsedMs / 60000);
         return Math.floor(raw * 10) / 10;
-    }, [elapsedMs, metrics.shippedCount]);
+    }, [run.outcome, run.finalUPM, elapsedMs, metrics.shippedCount]);
 
-    const formatTime = (ms: number) => {
-        const seconds = Math.max(0, ms / 1000);
-        return `${seconds.toFixed(1)}s`;
-    };
+    const formatTime = (ms: number) => `${Math.max(0, ms / 1000).toFixed(1)}s`;
 
     return {
         elapsedMs,
-        startTs,
-        stopTs,
+        startTs: run.startTs,
+        stopTs: run.stopTs,
         isComplete,
-        currentRunEvents,
+        outcome: run.outcome,
+        speed: run.speed,
+        totalPackages: run.total,
+        stranded: run.stranded,
+        stuck: run.stuck,
+        notUnloaded: run.notUnloaded,
+        finalUPM: run.finalUPM,
+        endMessage: run.endMessage,
+        currentRunEvents: run.relevant,
         metrics,
         throughputUnitsPerMin,
         formatTime,

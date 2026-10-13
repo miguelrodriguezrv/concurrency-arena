@@ -1,30 +1,35 @@
 class Package:
     id: int
-    processingTime: int
+    processingTime: int  # ms of warehouse time processPackage() will take
 
 class Warehouse:
-    """The Warehouse API provides methods to interact with the logistics system."""
+    """The warehouse. Every call is validated: breaking a rule raises an exception."""
 
-    async def unload(self) -> Package:
-        """Unloads the next package from the intake belt. Returns None if empty."""
+    async def unload(self) -> Package | None:
+        """Unload the next package from the trucks (300 ms). Max 4 at once; the
+        intake belt holds 8. Returns None when the trucks are empty."""
         ...
 
-    async def pushToProcessingLine(self, packageId: int, processingLineId: int):
-        """Moves a package onto a processing line (0, 1, or 2)."""
+    async def pushToProcessingLine(self, packageId: int, processingLineId: int) -> None:
+        """Move a package from the intake belt onto line 0, 1 or 2 (80 ms).
+        Each line holds at most 5 packages (a package keeps its slot until shipped)."""
         ...
 
-    async def processPackage(self, packageId: int, processingLineId: int):
-        """Performs work on a package at the specified processing line (blocking)."""
+    async def processPackage(self, packageId: int, processingLineId: int) -> None:
+        """Process a package on its line (takes package.processingTime).
+        Each line has one station: one package at a time per line."""
         ...
 
     async def print(self, packageId: int, processingLineId: int) -> str:
-        """Generates a shipping label and returns the assigned shipping lane."""
+        """Label the processed package at the END of the line (250 ms, +1200 ms if
+        the single printer has to move). Returns 'North', 'South' or 'International'."""
         ...
 
-    async def ship(self, packageId: int, shippingLine: str):
-        """Sends a package to the final shipping lane."""
+    async def ship(self, packageId: int, shippingLine: str) -> None:
+        """Send the printed package at the end of its line to the lane print()
+        returned (80 ms). Each lane holds 5 and loads one package per second."""
         ...
 
     def getShippingLineQueueLength(self, shippingLine: str) -> int:
-        """Returns the number of packages currently waiting in a shipping lane."""
+        """How many packages wait in a lane right now (0-5). May change right after."""
         ...

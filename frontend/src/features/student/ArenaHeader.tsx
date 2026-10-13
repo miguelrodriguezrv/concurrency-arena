@@ -13,6 +13,7 @@ import {
     PanelRightClose,
     BookOpen,
     Trophy,
+    Gauge,
 } from "lucide-react";
 import RulesModal from "@/components/RulesModal";
 import LeaderboardModal from "@/components/LeaderboardModal";
@@ -31,7 +32,11 @@ interface ArenaHeaderProps {
     onLogout: () => void;
     onToggleVisualizer: () => void;
     visualizerHidden: boolean;
+    speed: number;
+    onSpeedChange: (speed: number) => void;
 }
+
+export const SPEED_OPTIONS = [1, 2, 4] as const;
 
 export default function ArenaHeader({
     name,
@@ -44,6 +49,8 @@ export default function ArenaHeader({
     onLogout,
     onToggleVisualizer,
     visualizerHidden,
+    speed,
+    onSpeedChange,
 }: ArenaHeaderProps) {
     const isRunning = runnerState.status === "running";
 
@@ -197,6 +204,28 @@ export default function ArenaHeader({
                     </button>
                 </div>
 
+                {/* Simulation speed */}
+                <div
+                    className="flex items-center rounded-md border border-zinc-800 bg-zinc-900 overflow-hidden"
+                    title="Simulation speed. Times and scores are always reported in warehouse time, so they compare across speeds."
+                >
+                    <Gauge size={14} className="text-zinc-500 ml-2 mr-1" />
+                    {SPEED_OPTIONS.map((s) => (
+                        <button
+                            key={s}
+                            disabled={isRunning}
+                            onClick={() => onSpeedChange(s)}
+                            className={`px-2 py-1 text-xs font-mono font-semibold transition-colors disabled:cursor-not-allowed ${
+                                speed === s
+                                    ? "bg-zinc-700 text-zinc-100"
+                                    : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800"
+                            }`}
+                        >
+                            {s}×
+                        </button>
+                    ))}
+                </div>
+
                 {/* Local Run Button */}
                 <button
                     onClick={onRun}
@@ -245,7 +274,7 @@ export default function ArenaHeader({
                     <LogOut size={16} />
                 </button>
             </div>
-            <RulesModal open={rulesOpen} onClose={closeRules} />
+            <RulesModal open={rulesOpen} onClose={closeRules} language={language} />
             <LeaderboardModal open={leaderboardOpen} onClose={closeLeaderboard} />
         </header>
     );

@@ -8,10 +8,12 @@ package warehouse
 
 type Package struct {
 	ID             int
-	ProcessingTime int
+	ProcessingTime int // ms of warehouse time ProcessPackage will take
 }
 
+// Every method blocks until done. Breaking a rule returns an error.
 type Warehouse interface {
+	// Unload returns nil, nil when the trucks are empty. Max 4 at once.
 	Unload() (*Package, error)
 	PushToProcessingLine(packageId int, processingLineId int) error
 	ProcessPackage(packageId int, processingLineId int) error

@@ -226,10 +226,24 @@ export function visualReducer(state: VisualState, action: Action): VisualState {
             const pkg = newPackages[action.packageId];
             if (!pkg) return state;
 
-            // At SHIP_START we do NOT mark it as shipped or remove it from the queue yet,
-            // because it physically represents the package sitting inside the back of the
-            // truck for X seconds while the loader loads it!
-            return state;
+            // The loader takes the head of the lane into the truck. It no longer
+            // occupies a lane slot (matches the warehouse's capacity accounting).
+            const laneId = pkg.shippingLine ?? action.laneId;
+            const newShipQueue = (shippingQueues[laneId] || []).filter(
+                (id) => id !== action.packageId,
+            );
+            updateQueueIndices(newPackages, newShipQueue);
+            newPackages[action.packageId] = {
+                ...pkg,
+                stage: "LOADING",
+                statusString: "loading into truck",
+                shippingLine: laneId,
+            };
+            return {
+                ...state,
+                packages: newPackages,
+                shippingQueues: { ...shippingQueues, [laneId]: newShipQueue },
+            };
         }
 
         case "SHIP_COMPLETE": {

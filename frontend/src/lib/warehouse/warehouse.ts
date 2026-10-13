@@ -19,24 +19,83 @@ import type {
     ProcessingLineId,
 } from "./types";
 
-/** Timings and capacities (tunable) */
-const UNLOAD_MS = 600;
-const PUSH_MS = 100;
-const PRINT_BASE_MS = 500;
-const PRINT_TRAVEL_MS = 2000;
-const SHIP_REMOVE_INTERVAL_MS = 2000;
-const SHIP_ENQUEUE_MS = 200;
-const PROCESSING_TIME_MIN = 500;
-const PROCESSING_TIME_MAX = 3000; // inclusive
+/**
+ * Timings (in "game" milliseconds). Real waiting time = game time / speed.
+ * Tuned with scripts/simulate.ts so that both pipelining and printer batching
+ * pay off. See RULES.md for the student-facing table.
+ */
+export interface WarehouseTimings {
+    unloadMs: number;
+    pushMs: number;
+    processingMinMs: number;
+    processingMaxMs: number; // inclusive
+    printMs: number;
+    printerTravelMs: number;
+    shipEnqueueMs: number;
+    /** Each shipping lane loads one package into its truck every N ms. */
+    shipLoadMs: number;
+    /** Extra wait before a capacity rejection is thrown (bays, belt, line, lane full). */
+    capacityPenaltyMs: number;
+    /** Extra wait before a busy rejection is thrown (station, printer). */
+    busyPenaltyMs: number;
+}
+
+export const DEFAULT_TIMINGS: WarehouseTimings = {
+    unloadMs: 300,
+    pushMs: 80,
+    processingMinMs: 400,
+    processingMaxMs: 2000,
+    printMs: 250,
+    printerTravelMs: 1200,
+    shipEnqueueMs: 80,
+    shipLoadMs: 1000,
+    capacityPenaltyMs: 1000,
+    busyPenaltyMs: 500,
+};
+
+export interface WarehouseOptions {
+    /** Simulation speed multiplier (1 = normal, 2 = twice as fast, ...). */
+    speed?: number;
+    /** Override timings (tuning / tests only). */
+    timings?: Partial<WarehouseTimings>;
+}
+
 const INTAKE_CONCURRENCY = 4;
 const INTAKE_CAPACITY = 8;
 const PROCESSING_LINE_CAPACITY = 5;
 const SHIPPING_LINE_CAPACITY = 5;
 
+/** Public, read-only view of the limits so the UI can display them. */
+export const WAREHOUSE_LIMITS = {
+    intakeBays: INTAKE_CONCURRENCY,
+    intakeBelt: INTAKE_CAPACITY,
+    processingLine: PROCESSING_LINE_CAPACITY,
+    shippingLine: SHIPPING_LINE_CAPACITY,
+} as const;
+
 /** Penalties and Error Limits */
 const MAX_ERRORS = 100;
-const TRANSIENT_PENALTY_MS = 2000; // Delay for capacity/concurrency errors
-const RESOURCE_PENALTY_MS = 1000; // Delay for station/printer busy errors
+
+/** Max time to wait for in-flight work to settle after the student's code returns. */
+const SETTLE_TIMEOUT_MS = 60000;
+
+/** Verbose per-event console.debug logging (dev only). */
+const DEBUG_EVENT_LOGS =
+    import.meta.env?.VITE_WAREHOUSE_DEBUG !== undefined
+        ? import.meta.env.VITE_WAREHOUSE_DEBUG === "true"
+        : !!import.meta.env?.DEV;
+
+export interface RunSummary {
+    total: number;
+    shipped: number;
+    stranded: number[];
+    /** Unloaded but never shipped (left somewhere inside the warehouse). */
+    stuck: number[];
+    /** Never unloaded from the trucks. */
+    notUnloaded: number;
+    complete: boolean;
+    halted: boolean;
+}
 
 /** Utility delay */
 const delay = (ms: number) => new Promise((res) => setTimeout(res, ms));
@@ -78,20 +137,25 @@ interface InternalPackage {
     };
 }
 
-/** Helper: deterministic processingTime in [500,3000] and deterministic lane */
-function deterministicProcessingTime(id: number): number {
-    // simple deterministic formula: spread across [500..3000]
-    const span = PROCESSING_TIME_MAX - PROCESSING_TIME_MIN;
-    // use a deterministic linear congruence-ish step
-    const v = (id * 997) % (span + 1); // 0..span
-    return PROCESSING_TIME_MIN + v;
+/** Deterministic integer hash (so every participant gets the same deck). */
+function hash32(n: number, salt: number): number {
+    let x = (n + 1) * 0x9e3779b1 + salt * 0x85ebca6b;
+    x = Math.imul(x ^ (x >>> 16), 0x7feb352d);
+    x = Math.imul(x ^ (x >>> 15), 0x846ca68b);
+    return (x ^ (x >>> 16)) >>> 0;
 }
 
+/** Deterministic processingTime in [min, max], rounded to 10 ms. */
+function deterministicProcessingTime(id: number, t: WarehouseTimings): number {
+    const steps = Math.floor((t.processingMaxMs - t.processingMinMs) / 10);
+    return t.processingMinMs + (hash32(id, 1) % (steps + 1)) * 10;
+}
+
+const LANES: ShippingLine[] = ["North", "South", "International"];
+
+/** Deterministic shipping lane, independent of the package id pattern. */
 function deterministicTargetLane(id: number): ShippingLine {
-    const r = id % 3;
-    if (r === 0) return "North";
-    if (r === 1) return "South";
-    return "International";
+    return LANES[hash32(id, 2) % 3];
 }
 
 class Warehouse implements WarehouseAPI {
@@ -127,6 +191,15 @@ class Warehouse implements WarehouseAPI {
     private errorCount = 0;
     private isHalted = false;
 
+    // In-flight shipping work (used to detect when the warehouse is idle)
+    private pendingShipEnqueues = 0;
+    private shippingInFlight: Record<ShippingLine, boolean> = {
+        North: false,
+        South: false,
+        International: false,
+    };
+    private completedEmitted = false;
+
     // instrumentation
     private processedCount = 0;
     private firstUnloadTimestamp?: number;
@@ -141,7 +214,18 @@ class Warehouse implements WarehouseAPI {
      * - We accept an array of objects that include { id?: number } or an array of numbers.
      * - If undefined, we will generate package ids incrementally starting at 0.
      */
-    constructor(deck?: Array<{ id?: number } | number>) {
+    // timing configuration
+    private t: WarehouseTimings;
+    private speed: number;
+
+    /** Wait `ms` of game time (scaled by speed). */
+    private sleep(ms: number) {
+        return delay(ms / this.speed);
+    }
+
+    constructor(deck?: Array<{ id?: number } | number>, opts: WarehouseOptions = {}) {
+        this.t = { ...DEFAULT_TIMINGS, ...(opts.timings ?? {}) };
+        this.speed = opts.speed && opts.speed > 0 ? opts.speed : 1;
         // If a deck is provided, respect its size and ids; otherwise pre-create
         // a deterministic deck of 100 packages (ids 0..99).
         const DEFAULT_DECK_SIZE = 100;
@@ -158,7 +242,7 @@ class Warehouse implements WarehouseAPI {
                           ? (item as { id: number }).id
                           : i;
                 if (this.packageRecords.has(id)) continue;
-                const processingTime = deterministicProcessingTime(id);
+                const processingTime = deterministicProcessingTime(id, this.t);
                 const targetLane = deterministicTargetLane(id);
                 const rec: InternalPackage = {
                     id,
@@ -175,7 +259,7 @@ class Warehouse implements WarehouseAPI {
             // Pre-create a deterministic deck of DEFAULT_DECK_SIZE packages.
             for (let id = 0; id < DEFAULT_DECK_SIZE; id++) {
                 if (this.packageRecords.has(id)) continue;
-                const processingTime = deterministicProcessingTime(id);
+                const processingTime = deterministicProcessingTime(id, this.t);
                 const targetLane = deterministicTargetLane(id);
                 const rec: InternalPackage = {
                     id,
@@ -229,10 +313,8 @@ class Warehouse implements WarehouseAPI {
             // Emit to listeners...
             this.emitter.emit(ev);
 
-            // Also log a compact debug-friendly representation to the console.
-            // Keep the log lightweight but include the most useful fields so the
-            // front-end can show and filter runtime activity during development.
-            try {
+            // Also log a compact debug-friendly representation to the console (dev only).
+            if (DEBUG_EVENT_LOGS && ev.type !== "HEARTBEAT") try {
                 const p = ev;
                 const logEntry = {
                     type: ev.type,
@@ -284,7 +366,7 @@ class Warehouse implements WarehouseAPI {
         if (this.activeUnloaders >= INTAKE_CONCURRENCY) {
             const msg = `unload: intake concurrency exceeded (${INTAKE_CONCURRENCY})`;
             this.emit("ERROR", { metadata: { message: msg } });
-            await delay(TRANSIENT_PENALTY_MS);
+            await this.sleep(this.t.capacityPenaltyMs);
             throw new Error(msg);
         }
 
@@ -296,7 +378,7 @@ class Warehouse implements WarehouseAPI {
                     intakeCount: intakeOnBelt + this.activeUnloaders,
                 },
             });
-            await delay(TRANSIENT_PENALTY_MS);
+            await this.sleep(this.t.capacityPenaltyMs);
             throw new Error(msg);
         }
 
@@ -313,10 +395,10 @@ class Warehouse implements WarehouseAPI {
         // Simulate unload
         this.emit("INTAKE_START", {
             packageId: pkgId,
-            metadata: { unloadMs: UNLOAD_MS },
+            metadata: { unloadMs: this.t.unloadMs },
         });
         try {
-            await delay(UNLOAD_MS);
+            await this.sleep(this.t.unloadMs);
             if (this.isHalted) return null;
 
             // Update package to intake
@@ -330,7 +412,7 @@ class Warehouse implements WarehouseAPI {
             ).filter((p) => p.location === "intake").length;
             this.emit("INTAKE_DONE", {
                 packageId: pkgId,
-                metadata: { unloadMs: UNLOAD_MS, queueLengthAfter },
+                metadata: { unloadMs: this.t.unloadMs, queueLengthAfter },
             });
 
             // Return PublicPackage only
@@ -397,7 +479,7 @@ class Warehouse implements WarehouseAPI {
                 processingLineId,
                 metadata: { message: msg, queueLength: queue.length, pending },
             });
-            await delay(TRANSIENT_PENALTY_MS);
+            await this.sleep(this.t.capacityPenaltyMs);
             throw new Error(msg); // Throw after penalty delay
         }
 
@@ -408,10 +490,10 @@ class Warehouse implements WarehouseAPI {
         this.emit("INDUCTION_START", {
             packageId,
             processingLineId,
-            metadata: { pushMs: PUSH_MS },
+            metadata: { pushMs: this.t.pushMs },
         });
         try {
-            await delay(PUSH_MS);
+            await this.sleep(this.t.pushMs);
             if (this.isHalted) return;
 
             // enqueued - atomically transition from pending to actual queue
@@ -423,7 +505,7 @@ class Warehouse implements WarehouseAPI {
             this.emit("INDUCTION_DONE", {
                 packageId,
                 processingLineId,
-                metadata: { queueLengthAfter: queue.length, pushMs: PUSH_MS },
+                metadata: { queueLengthAfter: queue.length, pushMs: this.t.pushMs },
             });
         } catch (err) {
             if (!this.isHalted) {
@@ -495,7 +577,7 @@ class Warehouse implements WarehouseAPI {
                 processingLineId,
                 metadata: { message: msg },
             });
-            await delay(RESOURCE_PENALTY_MS);
+            await this.sleep(this.t.busyPenaltyMs);
             throw new Error(msg);
         }
 
@@ -515,7 +597,7 @@ class Warehouse implements WarehouseAPI {
         });
 
         try {
-            await delay(rec.processingTime);
+            await this.sleep(rec.processingTime);
             if (this.isHalted) {
                 rec.status = originalStatus;
                 return;
@@ -597,13 +679,13 @@ class Warehouse implements WarehouseAPI {
                 processingLineId,
                 metadata: { message: msg },
             });
-            await delay(RESOURCE_PENALTY_MS);
+            await this.sleep(this.t.busyPenaltyMs);
             throw new Error(msg);
         }
 
         // compute travel penalty
         const travelPenalty =
-            this.printerPosition === processingLineId ? 0 : PRINT_TRAVEL_MS;
+            this.printerPosition === processingLineId ? 0 : this.t.printerTravelMs;
         this.printerBusy = true;
         this.emit("PRINTER_MOVE_START", {
             packageId,
@@ -618,7 +700,7 @@ class Warehouse implements WarehouseAPI {
         try {
             // move (simulate travel) if needed
             if (travelPenalty > 0) {
-                await delay(travelPenalty);
+                await this.sleep(travelPenalty);
                 if (this.isHalted) throw new Error("Warehouse Halted");
             }
             this.printerPosition = processingLineId;
@@ -637,11 +719,11 @@ class Warehouse implements WarehouseAPI {
                 processingLineId,
                 metadata: {
                     atPrinterLine: this.printerPosition,
-                    printMs: PRINT_BASE_MS,
+                    printMs: this.t.printMs,
                     travelMs: travelPenalty,
                 },
             });
-            await delay(PRINT_BASE_MS);
+            await this.sleep(this.t.printMs);
             if (this.isHalted) throw new Error("Warehouse Halted");
 
             // set private status and return target lane
@@ -654,7 +736,7 @@ class Warehouse implements WarehouseAPI {
                 processingLineId,
                 shippingLine: lane,
                 metadata: {
-                    printMs: PRINT_BASE_MS,
+                    printMs: this.t.printMs,
                     travelMs: travelPenalty,
                     atPrinterLine: this.printerPosition,
                 },
@@ -739,13 +821,14 @@ class Warehouse implements WarehouseAPI {
                 shippingLine,
                 metadata: { message: msg, queueLength: queue.length },
             });
-            await delay(TRANSIENT_PENALTY_MS);
+            await this.sleep(this.t.capacityPenaltyMs);
             throw new Error(msg); // Throw after penalty delay
         }
 
         // enqueue quickly and return
+        this.pendingShipEnqueues++;
         try {
-            await delay(SHIP_ENQUEUE_MS);
+            await this.sleep(this.t.shipEnqueueMs);
             if (this.isHalted) return;
 
             // Shift from processing queue ONLY NOW
@@ -764,7 +847,7 @@ class Warehouse implements WarehouseAPI {
                 shippingLine,
                 metadata: {
                     queueLength: queue.length,
-                    enqueueMs: SHIP_ENQUEUE_MS,
+                    enqueueMs: this.t.shipEnqueueMs,
                 },
             });
             return;
@@ -777,6 +860,8 @@ class Warehouse implements WarehouseAPI {
                 });
             }
             throw err;
+        } finally {
+            this.pendingShipEnqueues = Math.max(0, this.pendingShipEnqueues - 1);
         }
     }
 
@@ -784,6 +869,65 @@ class Warehouse implements WarehouseAPI {
     getShippingLineQueueLength(shippingLine: ShippingLine): number {
         const q = this.shippingQueues[shippingLine];
         return q ? q.length : 0;
+    }
+
+    // ---------- End-of-run settlement ----------
+
+    /** True when nothing is moving inside the warehouse anymore. */
+    private isIdle(): boolean {
+        return (
+            this.activeUnloaders === 0 &&
+            this.pendingProcessingCounts.every((n) => n === 0) &&
+            this.processingBusy.every((b) => !b) &&
+            !this.printerBusy &&
+            this.pendingShipEnqueues === 0 &&
+            Object.values(this.shippingQueues).every((q) => q.length === 0) &&
+            Object.values(this.shippingInFlight).every((b) => !b)
+        );
+    }
+
+    /**
+     * Called by the runner once the student's code has returned.
+     * Waits for in-flight work (e.g. shipping lanes draining) to finish, then
+     * reports whether every package shipped. Emits INCOMPLETE if packages
+     * were left behind.
+     */
+    async settle(timeoutMs = SETTLE_TIMEOUT_MS): Promise<RunSummary> {
+        const deadline = performance.now() + timeoutMs;
+        while (!this.isHalted && !this.isIdle() && performance.now() < deadline) {
+            await delay(50);
+        }
+        // Give the COMPLETED emission (same tick as the last ship) a chance to land.
+        await delay(0);
+
+        const total = this.packageRecords.size;
+        const records = Array.from(this.packageRecords.values());
+        const stranded = records.filter((p) => p.status !== "shipped").map((p) => p.id);
+        const summary: RunSummary = {
+            total,
+            shipped: this.processedCount,
+            stranded,
+            stuck: records
+                .filter((p) => p.status !== "on_deck" && p.status !== "shipped")
+                .map((p) => p.id),
+            notUnloaded: records.filter((p) => p.status === "on_deck").length,
+            complete: stranded.length === 0,
+            halted: this.isHalted,
+        };
+
+        if (!summary.complete && !this.isHalted) {
+            this.emit("INCOMPLETE", {
+                metadata: {
+                    shipped: summary.shipped,
+                    total,
+                    stranded,
+                    stuck: summary.stuck,
+                    notUnloaded: summary.notUnloaded,
+                    message: `${stranded.length} package(s) never shipped`,
+                },
+            });
+        }
+        return summary;
     }
 
     // Optional state snapshot for UI / debugging
@@ -809,21 +953,22 @@ class Warehouse implements WarehouseAPI {
             while (this.shippingRunning && !this.isHalted) {
                 const q = this.shippingQueues[line];
                 if (!q || q.length === 0) {
-                    await delay(50);
+                    await this.sleep(25);
                     continue;
                 }
                 // pop head and process
                 const packageId = q.shift()!;
+                this.shippingInFlight[line] = true;
                 this.emit("SHIP_START", {
                     packageId,
                     shippingLine: line,
                     metadata: {
                         queueLength: q.length,
-                        shipRemoveMs: SHIP_REMOVE_INTERVAL_MS,
+                        shipRemoveMs: this.t.shipLoadMs,
                     },
                 });
                 try {
-                    await delay(SHIP_REMOVE_INTERVAL_MS);
+                    await this.sleep(this.t.shipLoadMs);
                     if (!this.shippingRunning || this.isHalted) return;
                     // mark shipped
                     const rec = this.packageRecords.get(packageId);
@@ -839,20 +984,31 @@ class Warehouse implements WarehouseAPI {
                         shippingLine: line,
                         metadata: {
                             processedCount: this.processedCount,
-                            shipRemoveMs: SHIP_REMOVE_INTERVAL_MS,
+                            total: this.packageRecords.size,
+                            shipRemoveMs: this.t.shipLoadMs,
                         },
                     });
 
-                    // If we just shipped the last package (99), the run is effectively complete.
-                    // Emit a definitive COMPLETED event with final metrics.
-                    if (packageId === 99 && this.firstUnloadTimestamp) {
-                        const finalDurationMs = this.lastShipTimestamp - this.firstUnloadTimestamp;
-                        const finalUPM = Math.floor((100 / (finalDurationMs / 60000)) * 10) / 10;
-                        this.emit("COMPLETED" as any, {
+                    // Every package in the deck has shipped: the run is complete.
+                    if (
+                        !this.completedEmitted &&
+                        this.processedCount >= this.packageRecords.size &&
+                        this.firstUnloadTimestamp !== undefined
+                    ) {
+                        this.completedEmitted = true;
+                        // Reported in game time so scores are comparable across speeds.
+                        const finalDurationMs =
+                            (this.lastShipTimestamp - this.firstUnloadTimestamp) * this.speed;
+                        const finalUPM =
+                            Math.floor((this.processedCount / (finalDurationMs / 60000)) * 10) / 10;
+                        this.emit("COMPLETED", {
                             metadata: {
                                 finalDuration: finalDurationMs,
                                 finalUPM,
                                 processedCount: this.processedCount,
+                                total: this.packageRecords.size,
+                                errorCount: this.errorCount,
+                                speed: this.speed,
                             },
                         });
                     }
@@ -863,6 +1019,8 @@ class Warehouse implements WarehouseAPI {
                         shippingLine: line,
                         metadata: { message: String(err) },
                     });
+                } finally {
+                    this.shippingInFlight[line] = false;
                 }
             }
         };
@@ -906,8 +1064,9 @@ class Warehouse implements WarehouseAPI {
 /** Factory */
 export function createWarehouse(
     deck?: Array<{ id?: number } | number>,
+    opts?: WarehouseOptions,
 ): WarehouseAPI {
-    return new Warehouse(deck);
+    return new Warehouse(deck, opts);
 }
 
 export default createWarehouse;
