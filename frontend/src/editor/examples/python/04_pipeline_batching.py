@@ -18,7 +18,7 @@ import warehouse
 BAYS = 4
 BELT_CAPACITY = 8
 LINE_CAPACITY = 5
-LANE_CAPACITY = 5
+LANE_CAPACITY = 4
 MIN_BATCH_TO_MOVE = 3  # tune me!
 
 

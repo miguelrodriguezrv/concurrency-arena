@@ -173,7 +173,7 @@ async function runFillLines() {
 
                     // Once printed, wait for shipping capacity and ship it
                     const lane = head.lane;
-                    if (warehouse.getShippingLineQueueLength(lane) < 5) {
+                    if (warehouse.getShippingLineQueueLength(lane) < 4) {
                         await warehouse.ship(head.id, lane);
                         // Once shipped, the head will be removed from processingLines[i]
                         // by the SHIP_ENQUEUED event listener.

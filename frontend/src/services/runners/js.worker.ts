@@ -2,6 +2,12 @@ import type { RunnerEvent, RunnerCommand, StartRunPayload } from "./bridge";
 import { createWarehouse } from "@/lib/warehouse/warehouse";
 import type { PackagePublic } from "@/lib/warehouse/types";
 import { forwardWarehouseEvents, settleWarehouse } from "./warehouseBridge";
+import { JS_LIBRARIES, JS_LIBRARY_GLOBALS, rewriteImports } from "./jsLibraries";
+
+// Concurrency helpers (p-limit, async-mutex, p-queue) are also plain globals,
+// so code without import lines works too. Globals (not function parameters)
+// so an import of the same name can shadow them without a redeclaration error.
+Object.assign(self, JS_LIBRARY_GLOBALS);
 
 // This file is compiled as an isolated Web Worker by Vite.
 
@@ -59,11 +65,23 @@ const executeCode = async (code: string, deck?: PackagePublic[], speed = 1) => {
         ).constructor;
 
         // The student's code is injected here. We give them access to the `API` object and `warehouse`.
-        const runner = new AsyncFunction("API", "warehouse", code);
+        // `import x from "p-limit"` etc. become `const x = __lib[...]`.
+        let runnable: string;
+        try {
+            runnable = rewriteImports(code);
+        } catch (err) {
+            postEvent({
+                type: "RUN_ERROR",
+                payload: err instanceof Error ? err.message : String(err),
+            });
+            warehouse.dispose?.();
+            return;
+        }
+        const runner = new AsyncFunction("API", "warehouse", "__lib", runnable);
 
         // Run student code with both arguments
         try {
-            await runner(API, warehouse);
+            await runner(API, warehouse, JS_LIBRARIES);
         } catch (error) {
             postEvent({
                 type: "RUN_ERROR",

@@ -13,6 +13,8 @@
  * for you, so waiting is your job.
  */
 
+// Available helpers: import pLimit from "p-limit"; import { Mutex, Semaphore } from "async-mutex"; import PQueue from "p-queue";
+
 async function handlePackage(pkg) {
     // Spread packages over the three processing lines (0, 1, 2).
     const line = pkg.id % 3;

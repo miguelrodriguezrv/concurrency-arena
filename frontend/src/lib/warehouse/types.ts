@@ -105,12 +105,12 @@ export interface WarehouseAPI {
     ): Promise<ShippingLine>;
 
     /**
-     * Ship the printed package at the head of its line into its lane (max 5
+     * Ship the printed package at the head of its line into its lane (max 4
      * waiting). Resolves once enqueued; lanes load trucks in the background.
      */
     ship(packageId: number, shippingLine: ShippingLine): Promise<void>;
 
-    /** Current queue length of a shipping lane (0..5). Optimistic: may change. */
+    /** Current queue length of a shipping lane (0..4). Optimistic: may change. */
     getShippingLineQueueLength(shippingLine: ShippingLine): number;
 
     /**

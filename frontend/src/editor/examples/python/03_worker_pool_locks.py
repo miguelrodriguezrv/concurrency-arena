@@ -9,7 +9,7 @@ Shared resources are protected with asyncio.Lock:
   - one lock per processing line (one package on a line at a time)
   - one lock for the printer
   - one lock per shipping lane (check space + ship must be ONE step,
-    otherwise two workers both see "4/5" and both ship -> rejected)
+    otherwise two workers both see "3/4" and both ship -> rejected)
 
 Better than sequential, but the printer still travels for almost every
 package, and each line only ever holds one package.
@@ -26,7 +26,7 @@ lane_locks = {lane: asyncio.Lock() for lane in LANES}
 
 async def ship_when_there_is_room(w, pkg_id, lane):
     async with lane_locks[lane]:
-        while w.getShippingLineQueueLength(lane) >= 5:
+        while w.getShippingLineQueueLength(lane) >= 4:
             await asyncio.sleep(0.05)  # the lane is full: wait for the truck
         await w.ship(pkg_id, lane)
 

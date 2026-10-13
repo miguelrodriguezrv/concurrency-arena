@@ -10,7 +10,7 @@ package main
 //   - one mutex per processing line (one package on a line at a time)
 //   - one mutex for the printer
 //   - one mutex per shipping lane (check space + ship must be ONE step,
-//     otherwise two workers both see "4/5" and both ship → rejected)
+//     otherwise two workers both see "3/4" and both ship → rejected)
 //
 // Better than sequential, but the printer still travels for almost every
 // package, and each line only ever holds one package.
@@ -35,7 +35,7 @@ var (
 func shipWhenThereIsRoom(w warehouse.Warehouse, id int, lane string) error {
 	laneLocks[lane].Lock()
 	defer laneLocks[lane].Unlock()
-	for w.GetShippingLineQueueLength(lane) >= 5 {
+	for w.GetShippingLineQueueLength(lane) >= 4 {
 		time.Sleep(50 * time.Millisecond) // the lane is full: wait for the truck
 	}
 	return w.Ship(id, lane)

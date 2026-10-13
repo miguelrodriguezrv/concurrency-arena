@@ -80,7 +80,17 @@ interface AppState {
 export const useStore = create<AppState>((set, get) => ({
     // Leaderboard & Personal Best
     leaderboard: [],
-    personalBests: {},
+    // Read synchronously at startup so a page reload doesn't briefly look
+    // logged-out (which bounced /dashboard and /arena through "/" and dropped
+    // the state the server replays right after connecting).
+    personalBests: (() => {
+        const pbs: Record<string, number> = {};
+        for (const lang of ["javascript", "go", "python"] as SupportedLanguage[]) {
+            const pb = getPersonalBest(lang);
+            if (pb !== null) pbs[lang] = pb;
+        }
+        return pbs;
+    })(),
 
     addScore: (entry) => {
         set((state) => {
@@ -121,7 +131,7 @@ export const useStore = create<AppState>((set, get) => ({
         });
     },
 
-    session: null,
+    session: getStoredSession(),
     setSession: (session) => {
         if (session) {
             persistSession(session);

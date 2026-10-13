@@ -21,6 +21,7 @@ type StudentState struct {
 type ScoreEntry struct {
 	UserName  string  `json:"userName"`
 	UPM       float64 `json:"upm"`
+	Duration  float64 `json:"duration"` // ms of warehouse time
 	Language  string  `json:"language"`
 	Timestamp int64   `json:"timestamp"`
 }

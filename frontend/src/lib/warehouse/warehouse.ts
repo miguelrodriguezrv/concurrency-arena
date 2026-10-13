@@ -27,8 +27,14 @@ import type {
 export interface WarehouseTimings {
     unloadMs: number;
     pushMs: number;
+    /** Normal packages: processingTime in [min, max]. */
     processingMinMs: number;
     processingMaxMs: number; // inclusive
+    /** Fraction of the deck that are slow packages (0..1). */
+    slowFraction: number;
+    /** Slow packages: processingTime in [slowMin, slowMax]. */
+    slowMinMs: number;
+    slowMaxMs: number;
     printMs: number;
     printerTravelMs: number;
     shipEnqueueMs: number;
@@ -41,16 +47,19 @@ export interface WarehouseTimings {
 }
 
 export const DEFAULT_TIMINGS: WarehouseTimings = {
-    unloadMs: 300,
+    unloadMs: 600,
     pushMs: 80,
-    processingMinMs: 400,
-    processingMaxMs: 2000,
+    processingMinMs: 500,
+    processingMaxMs: 1700,
+    slowFraction: 0.1,
+    slowMinMs: 4000,
+    slowMaxMs: 6000,
     printMs: 250,
-    printerTravelMs: 1200,
+    printerTravelMs: 900,
     shipEnqueueMs: 80,
-    shipLoadMs: 1000,
-    capacityPenaltyMs: 1000,
-    busyPenaltyMs: 500,
+    shipLoadMs: 1400,
+    capacityPenaltyMs: 800,
+    busyPenaltyMs: 400,
 };
 
 export interface WarehouseOptions {
@@ -63,7 +72,7 @@ export interface WarehouseOptions {
 const INTAKE_CONCURRENCY = 4;
 const INTAKE_CAPACITY = 8;
 const PROCESSING_LINE_CAPACITY = 5;
-const SHIPPING_LINE_CAPACITY = 5;
+const SHIPPING_LINE_CAPACITY = 4;
 
 /** Public, read-only view of the limits so the UI can display them. */
 export const WAREHOUSE_LIMITS = {
@@ -145,10 +154,18 @@ function hash32(n: number, salt: number): number {
     return (x ^ (x >>> 16)) >>> 0;
 }
 
-/** Deterministic processingTime in [min, max], rounded to 10 ms. */
+/**
+ * Deterministic processingTime, rounded to 10 ms. Most packages are "normal";
+ * a fraction (slowFraction) are much slower, which rewards routing decisions.
+ */
 function deterministicProcessingTime(id: number, t: WarehouseTimings): number {
-    const steps = Math.floor((t.processingMaxMs - t.processingMinMs) / 10);
-    return t.processingMinMs + (hash32(id, 1) % (steps + 1)) * 10;
+    const pick = (hash32(id, 1) % 100000) / 99999;
+    const pos = (hash32(id, 3) % 100000) / 99999;
+    const [lo, hi] =
+        pick < t.slowFraction
+            ? [t.slowMinMs, t.slowMaxMs]
+            : [t.processingMinMs, t.processingMaxMs];
+    return Math.round((lo + pos * (hi - lo)) / 10) * 10;
 }
 
 const LANES: ShippingLine[] = ["North", "South", "International"];

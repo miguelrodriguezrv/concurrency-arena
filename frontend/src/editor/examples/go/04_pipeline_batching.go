@@ -25,7 +25,7 @@ const (
 	bays           = 4
 	beltCapacity   = 8
 	lineCapacity   = 5
-	laneCapacity   = 5
+	laneCapacity   = 4
 	minBatchToMove = 3 // tune me!
 )
 

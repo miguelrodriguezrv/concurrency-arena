@@ -9,6 +9,7 @@
  */
 import { readFileSync } from "node:fs";
 import { createWarehouse, DEFAULT_TIMINGS, type WarehouseTimings } from "../src/lib/warehouse/warehouse";
+import { JS_LIBRARIES, rewriteImports } from "../src/services/runners/jsLibraries";
 
 const speed = Number(process.argv[2] ?? 20);
 const presetName = process.argv[3] ?? "default";
@@ -18,6 +19,7 @@ const PRESETS: Record<string, Partial<WarehouseTimings>> = {
     old: {
         unloadMs: 600, pushMs: 100, processingMinMs: 500, processingMaxMs: 3000, printMs: 500,
         printerTravelMs: 2000, shipEnqueueMs: 200, shipLoadMs: 2000, capacityPenaltyMs: 2000, busyPenaltyMs: 1000,
+        slowFraction: 0,
     },
 };
 for (const arg of process.argv.slice(4)) {
@@ -105,7 +107,7 @@ async function runOne(name: string, code: string): Promise<Result> {
     try {
         const limit = 900000 / speed; // 15 game-minutes
         await Promise.race([
-            new AsyncFunction("warehouse", "console", code)(wh, silent),
+            new AsyncFunction("warehouse", "console", "__lib", rewriteImports(code))(wh, silent, JS_LIBRARIES),
             new Promise((_, rej) => setTimeout(() => rej(new Error("timeout (stalled?)")), limit)),
         ]);
         const s = await wh.settle!(600000 / speed);
@@ -128,14 +130,16 @@ async function runOne(name: string, code: string): Promise<Result> {
 function bounds() {
     // Lower bounds (game time) to reason about the balance.
     const t = timings;
-    const avgProc = (t.processingMinMs + t.processingMaxMs) / 2;
+    const avgProc =
+        (1 - t.slowFraction) * ((t.processingMinMs + t.processingMaxMs) / 2) +
+        t.slowFraction * ((t.slowMinMs + t.slowMaxMs) / 2);
     const N = 100;
     return {
         "intake (4 bays)": (N * t.unloadMs) / 4 / 1000,
         "processing (3 lines)": (N * avgProc) / 3 / 1000,
         "printer, no moves": (N * (t.printMs + t.shipEnqueueMs)) / 1000,
         "printer, batches of 5": (N * (t.printMs + t.shipEnqueueMs) + (N / 5 - 1) * t.printerTravelMs) / 1000,
-        "shipping (busiest lane ~36)": (36 * t.shipLoadMs) / 1000,
+        "shipping (busiest lane ~37)": (37 * t.shipLoadMs) / 1000,
     };
 }
 

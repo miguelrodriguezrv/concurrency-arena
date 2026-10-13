@@ -4,6 +4,13 @@ import { useNavigate } from "react-router-dom";
 import { useStore } from "@/store";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import CodeEditor from "@/components/editor/CodeEditor";
+import { useCodeRunner, type SupportedLanguage } from "@/hooks/useCodeRunner";
+import { WarehouseVisualizer } from "@/components/warehouse/WarehouseVisualizer";
+import RunResultCard from "@/components/warehouse/RunResultCard";
+import ConsoleOutput from "@/components/console/ConsoleOutput";
+import useWarehouseMetrics from "@/components/warehouse/useWarehouseMetrics";
+import type { WarehouseEventPayload } from "@/components/warehouse/types";
+import { SPEED_OPTIONS } from "@/features/student/ArenaHeader";
 import {
     Users,
     Play,
@@ -16,6 +23,8 @@ import {
     WifiOff,
     RefreshCw,
     Trophy,
+    Square,
+    X,
 } from "lucide-react";
 
 export default function DashboardPage() {
@@ -33,6 +42,19 @@ export default function DashboardPage() {
     );
 
     const { status, sendMessage, subscribeToAdminCommands } = useWebSocket();
+
+    // "Run on Floor": run the staged code locally with the same runner and
+    // visualizer students use. Instructor runs are never submitted as scores.
+    const { runnerState, executeCode, stopRun } = useCodeRunner();
+    const [floorOpen, setFloorOpen] = useState(false);
+    const [floorSpeed, setFloorSpeed] = useState<number>(1);
+    const [resultDismissed, setResultDismissed] = useState(false);
+    const floorEvents = (runnerState.warehouseEvents || []) as WarehouseEventPayload[];
+    const floorMetrics = useWarehouseMetrics(floorEvents);
+    const isFloorRunning = runnerState.status === "running" || runnerState.status === "booting";
+    const stagedLanguage: SupportedLanguage =
+        ((stagedStudentName && students[stagedStudentName]?.language) as SupportedLanguage) ||
+        "javascript";
 
     const [autoRefresh, setAutoRefresh] = useState<boolean>(true);
     const [isOutOfDate, setIsOutOfDate] = useState<boolean>(false);
@@ -96,8 +118,17 @@ export default function DashboardPage() {
     };
 
     const handleRunStaged = () => {
-        // Stage 3/4 Implementation
-        toast("Execution pipeline coming soon!");
+        if (isFloorRunning) {
+            stopRun();
+            return;
+        }
+        if (!activeCodeOnStage.trim()) {
+            toast.error("Nothing on stage to run.");
+            return;
+        }
+        setFloorOpen(true);
+        setResultDismissed(false);
+        executeCode(activeCodeOnStage, stagedLanguage, floorSpeed);
     };
 
     const handleLogout = () => {
@@ -374,31 +405,52 @@ export default function DashboardPage() {
                                     </span>
                                 </div>
 
+                                <div className="flex items-center rounded-md border border-zinc-700 bg-zinc-900 overflow-hidden" title="Simulation speed">
+                                    {SPEED_OPTIONS.map((sp) => (
+                                        <button
+                                            key={sp}
+                                            disabled={isFloorRunning}
+                                            onClick={() => setFloorSpeed(sp)}
+                                            className={`px-2 py-1 text-xs font-mono font-semibold disabled:cursor-not-allowed ${
+                                                floorSpeed === sp
+                                                    ? "bg-zinc-700 text-zinc-100"
+                                                    : "text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800"
+                                            }`}
+                                        >
+                                            {sp}×
+                                        </button>
+                                    ))}
+                                </div>
+
                                 <button
                                     onClick={handleRunStaged}
-                                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white py-1.5 px-4 rounded-md text-sm font-medium transition-colors border border-transparent"
+                                    className={`flex items-center gap-2 ${
+                                        isFloorRunning
+                                            ? "bg-rose-600 hover:bg-rose-500"
+                                            : "bg-blue-600 hover:bg-blue-500"
+                                    } text-white py-1.5 px-4 rounded-md text-sm font-medium transition-colors border border-transparent`}
                                 >
-                                    <Play size={16} fill="currentColor" />
-                                    Run on Floor
+                                    {isFloorRunning ? (
+                                        <>
+                                            <Square size={14} fill="currentColor" />
+                                            Stop
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Play size={16} fill="currentColor" />
+                                            Run on Floor
+                                        </>
+                                    )}
                                 </button>
                             </div>
                         </div>
 
+                        <div className="flex-1 flex min-h-0">
+                        <div className="flex-1 min-w-0 min-h-0">
                         <CodeEditor
+                            key={stagedLanguage}
                             code={activeCodeOnStage}
-                            language={
-                                (stagedStudentName &&
-                                    (students[
-                                        stagedStudentName
-                                    ]?.code?.includes("package main")
-                                        ? "go"
-                                        : students[
-                                                stagedStudentName
-                                            ]?.code?.includes("import asyncio")
-                                          ? "python"
-                                          : "javascript")) ||
-                                "javascript"
-                            }
+                            language={stagedLanguage}
                             onChange={(val) => {
                                 const newVal = val || "";
                                 // If the instructor starts typing while Auto-refresh is enabled,
@@ -412,6 +464,54 @@ export default function DashboardPage() {
                                 setActiveCodeOnStage(newVal);
                             }}
                         />
+                        </div>
+
+                        {floorOpen && (
+                            <div className="w-[55%] shrink-0 flex flex-col gap-3 p-3 border-l border-zinc-800 bg-zinc-950 min-h-0">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
+                                        Floor · {stagedStudentName}&apos;s code
+                                    </span>
+                                    <button
+                                        onClick={() => {
+                                            stopRun();
+                                            setFloorOpen(false);
+                                        }}
+                                        className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800"
+                                        title="Close floor"
+                                    >
+                                        <X size={16} />
+                                    </button>
+                                </div>
+                                <div
+                                    className="relative shrink-0 rounded border border-zinc-800 overflow-hidden"
+                                    style={{ aspectRatio: "880 / 470" }}
+                                >
+                                    <WarehouseVisualizer events={floorEvents} />
+                                    <RunResultCard
+                                        open={floorMetrics.isComplete && !resultDismissed}
+                                        outcome={floorMetrics.outcome}
+                                        elapsedMs={floorMetrics.elapsedMs}
+                                        upm={floorMetrics.throughputUnitsPerMin}
+                                        shipped={floorMetrics.metrics.shippedCount}
+                                        total={floorMetrics.totalPackages}
+                                        errors={floorMetrics.metrics.errorCount}
+                                        printerEfficiency={floorMetrics.metrics.printerEfficiency}
+                                        stuck={floorMetrics.stuck}
+                                        notUnloaded={floorMetrics.notUnloaded}
+                                        message={floorMetrics.endMessage}
+                                        previousBest={Infinity}
+                                        speed={floorMetrics.speed}
+                                        onClose={() => setResultDismissed(true)}
+                                        onRunAgain={handleRunStaged}
+                                    />
+                                </div>
+                                <div className="flex-1 min-h-0 overflow-hidden rounded border border-zinc-800">
+                                    <ConsoleOutput runnerState={runnerState} />
+                                </div>
+                            </div>
+                        )}
+                        </div>
                     </>
                 ) : (
                     <div className="flex-1 flex flex-col items-center justify-center text-zinc-500 gap-4">

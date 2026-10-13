@@ -6,7 +6,7 @@ class Warehouse:
     """The warehouse. Every call is validated: breaking a rule raises an exception."""
 
     async def unload(self) -> Package | None:
-        """Unload the next package from the trucks (300 ms). Max 4 at once; the
+        """Unload the next package from the trucks (600 ms). Max 4 at once; the
         intake belt holds 8. Returns None when the trucks are empty."""
         ...
 
@@ -21,15 +21,15 @@ class Warehouse:
         ...
 
     async def print(self, packageId: int, processingLineId: int) -> str:
-        """Label the processed package at the END of the line (250 ms, +1200 ms if
+        """Label the processed package at the END of the line (250 ms, +900 ms if
         the single printer has to move). Returns 'North', 'South' or 'International'."""
         ...
 
     async def ship(self, packageId: int, shippingLine: str) -> None:
         """Send the printed package at the end of its line to the lane print()
-        returned (80 ms). Each lane holds 5 and loads one package per second."""
+        returned (80 ms). Each lane holds 4 and loads one package every 1.4 s."""
         ...
 
     def getShippingLineQueueLength(self, shippingLine: str) -> int:
-        """How many packages wait in a lane right now (0-5). May change right after."""
+        """How many packages wait in a lane right now (0-4). May change right after."""
         ...

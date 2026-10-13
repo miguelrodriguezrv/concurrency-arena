@@ -17,7 +17,7 @@
 |---|---|
 | {{c.unload}} | Take a package off a truck ({{null}} when the trucks are empty) |
 | {{c.push}} | Put it on line 0, 1 or 2 |
-| {{c.process}} | Process it (takes the package's {{n.processingTime}}) |
+| {{c.process}} | Process it (takes the package's {{n.processingTime}}: most take 0.5–1.7 s, a few take 4–6 s) |
 | {{c.print}} | Label it. This tells you its shipping lane |
 | {{c.ship}} | Send it to that lane |
 
@@ -26,7 +26,7 @@
 - **4** unloads at a time
 - **5** packages per line, and each line processes **1** at a time
 - **1** printer, and moving it to another line is slow
-- **5** packages waiting per shipping lane
+- **4** packages waiting per shipping lane
 
 Break a limit and the call {{rejects}} and costs you time. The warehouse never waits for you: **waiting is your job.** The floor view shows every limit and flashes red when a call is rejected.
 
@@ -41,13 +41,14 @@ Break a limit and the call {{rejects}} and costs you time. The warehouse never w
 
 | Level | Idea | ~Time |
 |---|---|---|
-| 0 | The starter: one package at a time | ~5 min |
-| 1 | Put every package on the same line, so the printer never moves | ~3 min |
-| 2 | 4 workers handling whole packages, with locks on lines, printer and lanes | ~2.5 min |
-| 3 | Separate stages: unloaders → one worker per line → one printer coordinator | ~2.5 min |
-| 4 | Level 3, plus the printer **batches**: it prints several packages on one line before moving | ~1 min |
+| 0 | The starter: one package at a time | ~6 min |
+| 1 | Put every package on the same line, so the printer never moves | ~4.5 min |
+| 2 | 4 workers handling whole packages, with locks on lines, printer and lanes | ~2.2 min |
+| 3 | Separate stages: unloaders → one worker per line → one printer coordinator | ~2 min |
+| 4 | Level 3, plus the printer **batches**: it prints several packages on one line before moving | ~70 s |
+| 5 | Fine-tuning: where each package goes, how long the printer waits before moving… | ? |
 
-Level 3 alone isn't much faster than level 2. The big jump comes when the pipeline and batching work together.
+Level 3 alone isn't much faster than level 2. The big jump comes when the pipeline and batching work together. After that, every second counts: you know each package's {{n.processingTime}} as soon as you unload it, so use it.
 
 ### Limit something to 4 at a time
 
@@ -63,6 +64,15 @@ async function unloader() {
     }
 }
 await Promise.all([unloader(), unloader(), unloader(), unloader()]);
+```
+
+Or limit any function with `p-limit`:
+
+```js
+import pLimit from "p-limit";
+
+const bays = pLimit(4);
+const pkg = await bays(() => warehouse.unload()); // waits if 4 are already running
 ```
 <!-- /lang -->
 <!-- lang:python -->
@@ -97,20 +107,14 @@ wg.Wait()
 ### One at a time (the printer)
 
 <!-- lang:js -->
-JavaScript has no built-in mutex, but one fits in a few lines:
+JavaScript has no built-in mutex, so use `async-mutex`:
 
 ```js
-class Mutex {
-    #last = Promise.resolve();
-    run(fn) {
-        const result = this.#last.then(fn);
-        this.#last = result.catch(() => {});
-        return result;
-    }
-}
+import { Mutex } from "async-mutex";
 
 const printer = new Mutex();
-const lane = await printer.run(() => warehouse.print(id, line));
+const lane = await printer.runExclusive(() => warehouse.print(id, line));
+// the lock is released when the function finishes, even if it throws
 ```
 <!-- /lang -->
 <!-- lang:python -->
@@ -139,22 +143,17 @@ Don't make an unloader wait until its package is printed. Hand it over and go ba
 
 <!-- lang:js -->
 ```js
-class Queue {
-    items = [];
-    waiting = [];
-    put(x) {
-        const wake = this.waiting.shift();
-        wake ? wake(x) : this.items.push(x);
-    }
-    get() {
-        if (this.items.length) return Promise.resolve(this.items.shift());
-        return new Promise((resolve) => this.waiting.push(resolve));
-    }
-}
+import PQueue from "p-queue";
 
-const toLine = [new Queue(), new Queue(), new Queue()];
-toLine[line].put(pkg);                  // unloader: hand off, move on
-const next = await toLine[line].get();  // line worker: wait for work
+// One queue per line, running one task at a time: the queue IS the line worker.
+const lines = [0, 1, 2].map(() => new PQueue({ concurrency: 1 }));
+
+// unloader: put it on the line, hand the processing off, go back to the trucks
+await warehouse.pushToProcessingLine(pkg.id, line);
+lines[line].add(() => warehouse.processPackage(pkg.id, line)); // no await
+
+// later: wait until a line has nothing left to process
+await lines[line].onIdle();
 ```
 <!-- /lang -->
 <!-- lang:python -->
@@ -238,7 +237,7 @@ mu.Unlock()
 
 ### Batch the printer
 
-Moving the printer costs more than four labels. While it works on one line, the other lines keep processing. When it moves, several packages are ready in a row. Stay on a line while it has work, and only move when another line has a batch waiting.
+Moving the printer costs more than three labels. While it works on one line, the other lines keep processing. When it moves, several packages are ready in a row. Stay on a line while it has work, and only move when another line has a batch waiting.
 
 ### Don't swallow errors
 
@@ -252,22 +251,22 @@ A package whose call failed is still on the floor. If nobody deals with it, it b
 
 | Step | Call | Takes | Limit |
 |---|---|---|---|
-| Unload | {{n.unload}} | 300 ms | 4 at the same time |
+| Unload | {{n.unload}} | 600 ms | 4 at the same time |
 | Intake belt | (between unload and push) | – | 8 packages, counting the ones being unloaded |
 | Put on a line | {{n.push}} | 80 ms | 5 packages per line |
-| Process | {{n.process}} | the package's {{n.processingTime}} (400–2000 ms) | 1 at a time per line |
-| Label | {{n.print}} | 250 ms, **+1200 ms** if the printer moves | 1 printer |
-| Ship | {{n.ship}} | 80 ms | 5 waiting per lane. Each lane loads one package into its truck every 1000 ms |
+| Process | {{n.process}} | the package's {{n.processingTime}}: 90% take 500–1700 ms, 10% take 4000–6000 ms | 1 at a time per line |
+| Label | {{n.print}} | 250 ms, **+900 ms** if the printer moves | 1 printer |
+| Ship | {{n.ship}} | 80 ms | 4 waiting per lane. Each lane loads one package into its truck every 1400 ms |
 
 ### Details
 
 1. **{{n.process}} works on any package on its line.** {{n.print}} and {{n.ship}} only work on the package at the **end of the line**: the oldest one still there.
 2. **A package keeps its line slot until it's shipped.** If its lane is full, the end of the line is stuck until the truck makes room.
 3. **The printer stays where it was last used.** Printing on the same line again is cheap.
-4. **Rejections cost time.** Over a limit (bays, belt, line or lane full): **1 s** before the call {{rejects}}. Station or printer busy: **0.5 s**. Wrong state (e.g. printing an unprocessed package): immediately.
+4. **Rejections cost time.** Over a limit (bays, belt, line or lane full): **0.8 s** before the call {{rejects}}. Station or printer busy: **0.4 s**. Wrong state (e.g. printing an unprocessed package): immediately.
 5. **After 100 rejected calls the warehouse shuts down** and the run doesn't count. Retrying blindly in a loop gets you there fast.
 6. **The run ends when all 100 packages have shipped.** If your code returns while packages are still in the trucks or on the floor, the run is **incomplete**.
-7. {{n.queueLength}} tells you how many packages wait in a lane (0–5). Another task can change it right after you look.
+7. {{n.queueLength}} tells you how many packages wait in a lane (0–4). Another task can change it right after you look.
 
 ### Score
 
@@ -290,10 +289,20 @@ await warehouse.pushToProcessingLine(pkg.id, line);  // line: 0 | 1 | 2
 await warehouse.processPackage(pkg.id, line);
 const lane = await warehouse.print(pkg.id, line);    // "North" | "South" | "International"
 await warehouse.ship(pkg.id, lane);
-warehouse.getShippingLineQueueLength(lane);          // 0..5 (no await)
+warehouse.getShippingLineQueueLength(lane);          // 0..4 (no await)
 ```
 
 A rejected call throws an `Error`. Catch it with `try / catch`.
+
+Concurrency helpers you can import (the same ones as in the slides):
+
+```js
+import pLimit from "p-limit";                     // pLimit(n): run at most n at a time
+import { Mutex, Semaphore } from "async-mutex";   // runExclusive(fn), acquire()/release
+import PQueue from "p-queue";                     // new PQueue({ concurrency }), add(), onIdle()
+```
+
+Other imports aren't available.
 <!-- /lang -->
 <!-- lang:python -->
 Write `async def run(w)`. The warehouse calls it for you.
@@ -304,7 +313,7 @@ await w.pushToProcessingLine(pkg.id, line)  # line: 0 | 1 | 2
 await w.processPackage(pkg.id, line)
 lane = await w.print(pkg.id, line)          # "North" | "South" | "International"
 await w.ship(pkg.id, lane)
-w.getShippingLineQueueLength(lane)          # 0..5 (no await)
+w.getShippingLineQueueLength(lane)          # 0..4 (no await)
 ```
 
 A rejected call raises an exception. Catch it with `try / except Exception`. Useful tools: `asyncio.gather`, `asyncio.Lock`, `asyncio.Semaphore`, `asyncio.Queue`, `asyncio.Condition`.
@@ -318,7 +327,7 @@ err = w.PushToProcessingLine(pkg.ID, line)  // line: 0, 1 or 2
 err = w.ProcessPackage(pkg.ID, line)
 lane, err := w.Print(pkg.ID, line)          // "North" | "South" | "International"
 err = w.Ship(pkg.ID, lane)
-n := w.GetShippingLineQueueLength(lane)     // 0..5
+n := w.GetShippingLineQueueLength(lane)     // 0..4
 ```
 
 A rejected call returns an `error`. Useful tools: goroutines, `sync.WaitGroup`, `sync.Mutex`, `sync.Cond`, channels.

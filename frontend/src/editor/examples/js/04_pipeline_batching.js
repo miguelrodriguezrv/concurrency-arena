@@ -17,7 +17,7 @@
 const BAYS = 4;
 const BELT_CAPACITY = 8;
 const LINE_CAPACITY = 5;
-const LANE_CAPACITY = 5;
+const LANE_CAPACITY = 4;
 const MIN_BATCH_TO_MOVE = 3; // tune me!
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
