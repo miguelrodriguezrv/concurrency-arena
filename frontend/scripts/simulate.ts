@@ -53,21 +53,11 @@ await Promise.all(Array.from({ length: 12 }, worker));
 const STRATEGIES: Record<string, string> = {
     "01 sequential": examples("01_sequential.js"),
     "02 single line": examples("02_single_line.js"),
-    "03 pool + locks": examples("03_worker_pool_locks.js"),
-    "04 pipeline (batch 3)": examples("04_pipeline_batching.js"),
-    "04 pipeline (batch 1)": examples("04_pipeline_batching.js").replace("MIN_BATCH_TO_MOVE = 3", "MIN_BATCH_TO_MOVE = 1"),
-    "04 pipeline (batch 5)": examples("04_pipeline_batching.js").replace("MIN_BATCH_TO_MOVE = 3", "MIN_BATCH_TO_MOVE = 5"),
-    "05 printer-aware": examples("04_pipeline_batching.js")
-        .replace("let at = 0; // the printer starts at line 0", "")
-        .replace("let onBelt = 0;", "let onBelt = 0; let at = 0;")
-        .replace(
-            "const best = [0, 1, 2].filter(hasRoom).sort((a, b) => lineLoad(a) - lineLoad(b))[0];",
-            "const best = hasRoom(at) ? at : [0, 1, 2].filter(hasRoom).sort((a, b) => lineLoad(a) - lineLoad(b))[0];",
-        ),
-    "04 pipeline round-robin": examples("04_pipeline_batching.js").replace(
-        "if (ready(at) > 0) return at;",
-        "{ const rr = [1, 2, 0].map((d) => (at + d) % 3).find((i) => ready(i) > 0); if (rr !== undefined) return rr; }",
-    ),
+    "03 unload ahead": examples("03_unload_ahead.js"),
+    "04 worker per line": examples("04_worker_per_line.js"),
+    "05 staged pipeline": examples("05_staged_pipeline.js"),
+    "06 printer batching": examples("06_printer_batching.js"),
+    "07 tuned": examples("07_tuned.js"),
     "xx brute retry x12": BRUTE_RETRY,
     "xx brute x4 backoff": BRUTE_RETRY.replace("length: 12", "length: 4").replace("sleep(5)", "sleep(300)"),
 };

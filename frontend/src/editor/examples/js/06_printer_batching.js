@@ -1,17 +1,18 @@
 /**
- * Example 04 — staged pipeline with a printer coordinator (JavaScript)
+ * Example 06 — printer batching (JavaScript)
  *
- * Each stage has its own workers, and they hand packages to each other
- * through shared state guarded by a "something changed" signal
- * (a tiny condition variable):
+ * Builds on 05. Only one thing changes: how the printer chooses where to go.
  *
- *   4 unloaders ──► line with the least queued work (max 5 per line)
- *   3 processors (one per line) process packages in order
- *   1 printer coordinator: batches labels on ONE line before moving,
- *     ships each package, and only travels when it's worth it.
+ * Moving the printer (900 ms) costs more than three labels (250 ms each).
+ * So it stays on a line while that line has packages ready, and only moves
+ * when another line has a batch waiting. Meanwhile the other lines keep
+ * processing, so when it arrives several packages are ready in a row.
  *
- * JavaScript runs on one thread, so plain variables are safe between two
- * `await`s — but any check that spans an `await` can go stale.
+ *   4 unloaders ──► the line with the fewest packages (max 5 per line)
+ *   3 processors, one per line
+ *   1 printer coordinator that batches labels on ONE line before moving
+ *
+ * Same stages as 05, about twice as fast.
  */
 
 const BAYS = 4;
@@ -52,9 +53,8 @@ const reserved = [0, 0, 0]; // pushes in flight per line
 let onBelt = 0; // unloading or waiting on the intake belt
 let trucksEmpty = false;
 
-const lineLoad = (i) =>
-    lines[i].filter((p) => p.state !== "processed").reduce((t, p) => t + p.time, 0);
 const hasRoom = (i) => lines[i].length + reserved[i] < LINE_CAPACITY;
+const count = (i) => lines[i].length + reserved[i];
 
 // --- Stage 1: unloaders --------------------------------------------------
 async function unloader() {
@@ -75,9 +75,9 @@ async function unloader() {
             return;
         }
 
-        // Claim a slot on the line with the least unprocessed work.
+        // Claim a slot on the line with the fewest packages.
         const line = await claim(() => {
-            const best = [0, 1, 2].filter(hasRoom).sort((a, b) => lineLoad(a) - lineLoad(b))[0];
+            const best = [0, 1, 2].filter(hasRoom).sort((a, b) => count(a) - count(b))[0];
             if (best !== undefined) reserved[best]++;
             return best;
         });

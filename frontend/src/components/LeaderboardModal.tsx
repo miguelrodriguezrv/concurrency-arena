@@ -13,13 +13,17 @@ export default function LeaderboardModal({
 }: LeaderboardModalProps) {
     const leaderboard = useStore((state) => state.leaderboard);
 
-    const formatTime = (ts: number) => {
-        return new Date(ts).toLocaleTimeString([], {
+    const formatDate = (ts: number) =>
+        new Date(ts).toLocaleDateString([], {
+            weekday: "short",
+            day: "numeric",
+            month: "short",
+        });
+    const formatTime = (ts: number) =>
+        new Date(ts).toLocaleTimeString([], {
             hour: "2-digit",
             minute: "2-digit",
-            second: "2-digit",
         });
-    };
 
     const formatDuration = (ms?: number) => {
         if (!ms) return "N/A";
@@ -45,7 +49,7 @@ export default function LeaderboardModal({
             open={open}
             onClose={onClose}
             title="Arena Leaderboard"
-            description="Top throughput performers (Live Session)"
+            description="Best run per player"
             icon={<Trophy className="text-yellow-500" size={24} />}
             footer={footer}
             maxWidth="max-w-3xl"
@@ -77,7 +81,7 @@ export default function LeaderboardModal({
                                     Throughput
                                 </th>
                                 <th className="px-6 py-3 font-bold text-right">
-                                    Time
+                                    When
                                 </th>
                             </tr>
                         </thead>
@@ -138,8 +142,14 @@ export default function LeaderboardModal({
                                         </div>
                                     </td>
                                     <td className="px-6 py-4 text-right">
-                                        <div className="flex items-center justify-end gap-1 text-zinc-500">
-                                            <span className="text-[11px] font-medium">
+                                        <div
+                                            className="flex flex-col items-end leading-tight text-zinc-500"
+                                            title={new Date(entry.timestamp).toLocaleString()}
+                                        >
+                                            <span className="text-[11px] font-medium text-zinc-400 whitespace-nowrap">
+                                                {formatDate(entry.timestamp)}
+                                            </span>
+                                            <span className="text-[11px] font-medium whitespace-nowrap">
                                                 {formatTime(entry.timestamp)}
                                             </span>
                                         </div>

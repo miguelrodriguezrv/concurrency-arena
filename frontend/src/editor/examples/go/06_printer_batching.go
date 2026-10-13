@@ -1,18 +1,19 @@
 package main
 
-// Example 04 — staged pipeline with a printer coordinator (Go)
+// Example 06 — printer batching (Go)
 //
-// Each stage has its own goroutines. They share one state struct guarded by
-// a sync.Mutex plus a sync.Cond ("wait until something is true, then act
-// while still holding the lock"):
+// Builds on 05. Only one thing changes: how the printer chooses where to go.
 //
-//	4 unloaders  → line with the least queued work (max 5 per line)
-//	3 processors → one per line, process packages in order
-//	1 printer    → batches labels on ONE line before moving, ships each
-//	               package, and only travels when it's worth it.
+// Moving the printer (900 ms) costs more than three labels (250 ms each).
+// So it stays on a line while that line has packages ready, and only moves
+// when another line has a batch waiting. Meanwhile the other lines keep
+// processing, so when it arrives several packages are ready in a row.
 //
-// Rule of thumb: check and claim under the same Lock(); do slow warehouse
-// calls with the lock released.
+//	4 unloaders  → the line with the fewest packages (max 5 per line)
+//	3 processors → one per line
+//	1 printer    → batches labels on ONE line before moving
+//
+// Same stages as 05, about twice as fast.
 
 import (
 	"fmt"
@@ -45,16 +46,6 @@ type floor struct {
 
 func (f *floor) hasRoom(i int) bool { return len(f.lines[i])+f.reserved[i] < lineCapacity }
 
-func (f *floor) lineLoad(i int) int {
-	t := 0
-	for _, p := range f.lines[i] {
-		if p.state != "processed" {
-			t += p.time
-		}
-	}
-	return t
-}
-
 func (f *floor) nextQueued(i int) *item {
 	for _, p := range f.lines[i] {
 		if p.state == "queued" {
@@ -81,16 +72,18 @@ func (f *floor) allDone() bool {
 		len(f.lines[0])+len(f.lines[1])+len(f.lines[2]) == 0
 }
 
-// bestLine returns the line with room and the least unprocessed work, or -1.
+// bestLine returns the line with room and the fewest packages, or -1.
 func (f *floor) bestLine() int {
 	best := -1
 	for i := 0; i < 3; i++ {
-		if f.hasRoom(i) && (best == -1 || f.lineLoad(i) < f.lineLoad(best)) {
+		if f.hasRoom(i) && (best == -1 || f.count(i) < f.count(best)) {
 			best = i
 		}
 	}
 	return best
 }
+
+func (f *floor) count(i int) int { return len(f.lines[i]) + f.reserved[i] }
 
 func unloader(w warehouse.Warehouse, f *floor, wg *sync.WaitGroup) {
 	defer wg.Done()

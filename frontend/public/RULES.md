@@ -41,14 +41,15 @@ Break a limit and the call {{rejects}} and costs you time. The warehouse never w
 
 | Level | Idea | ~Time |
 |---|---|---|
-| 0 | The starter: one package at a time | ~6 min |
-| 1 | Put every package on the same line, so the printer never moves | ~4.5 min |
-| 2 | 4 workers handling whole packages, with locks on lines, printer and lanes | ~2.2 min |
-| 3 | Separate stages: unloaders → one worker per line → one printer coordinator | ~2 min |
-| 4 | Level 3, plus the printer **batches**: it prints several packages on one line before moving | ~70 s |
-| 5 | Fine-tuning: where each package goes, how long the printer waits before moving… | ? |
+| 1 | The starter: one package at a time | ~6 min |
+| 2 | Put every package on the same line, so the printer never moves | ~4.5 min |
+| 3 | Unload ahead: an unloader keeps the next packages ready in a small queue | ~3.5 min |
+| 4 | One worker per line, all fed from that queue, with locks on the printer and lanes | ~2 min |
+| 5 | Separate stages: unloaders → lines process ahead → one printer coordinator | ~2 min |
+| 6 | Level 5, plus the printer **batches**: it prints several packages on one line before moving | ~70 s |
+| 7 | Fine-tuning: where each package goes, when the printer moves… | ? |
 
-Level 3 alone isn't much faster than level 2. The big jump comes when the pipeline and batching work together. After that, every second counts: you know each package's {{n.processingTime}} as soon as you unload it, so use it.
+Level 5 alone isn't faster than level 4: the printer is still the bottleneck and travels for almost every label. The big jump comes when the pipeline and batching work together. After that, every second counts: you know each package's {{n.processingTime}} as soon as you unload it, so use it.
 
 ### Limit something to 4 at a time
 

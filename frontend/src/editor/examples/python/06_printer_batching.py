@@ -1,16 +1,18 @@
 """
-Example 04 - staged pipeline with a printer coordinator (Python, asyncio)
+Example 06 - printer batching (Python, asyncio)
 
-Each stage has its own workers. They share one state object guarded by an
-asyncio.Condition ("wait until something is true, then act - atomically"):
+Builds on 05. Only one thing changes: how the printer chooses where to go.
 
-    4 unloaders  -> line with the least queued work (max 5 per line)
-    3 processors -> one per line, process packages in order
-    1 printer    -> batches labels on ONE line before moving, ships each
-                    package, and only travels when it's worth it.
+Moving the printer (900 ms) costs more than three labels (250 ms each).
+So it stays on a line while that line has packages ready, and only moves
+when another line has a batch waiting. Meanwhile the other lines keep
+processing, so when it arrives several packages are ready in a row.
 
-`async with cond: await cond.wait_for(check)` returns with the lock held,
-so the check and the claim that follows are one atomic step.
+    4 unloaders  -> the line with the fewest packages (max 5 per line)
+    3 processors -> one per line
+    1 printer    -> batches labels on ONE line before moving
+
+Same stages as 05, about twice as fast.
 """
 import asyncio
 import warehouse
@@ -42,8 +44,8 @@ class Floor:
     def has_room(self, i):
         return len(self.lines[i]) + self.reserved[i] < LINE_CAPACITY
 
-    def line_load(self, i):
-        return sum(p.time for p in self.lines[i] if p.state != "processed")
+    def count(self, i):
+        return len(self.lines[i]) + self.reserved[i]
 
     def next_queued(self, i):
         return next((p for p in self.lines[i] if p.state == "queued"), None)
@@ -79,7 +81,8 @@ async def unloader(w, f: Floor):
 
         async with f.changed:
             await f.changed.wait_for(lambda: any(f.has_room(i) for i in range(3)))
-            line = min((i for i in range(3) if f.has_room(i)), key=f.line_load)
+            # the line with the fewest packages
+            line = min((i for i in range(3) if f.has_room(i)), key=f.count)
             f.reserved[line] += 1  # claim a line slot
 
         await w.pushToProcessingLine(pkg.id, line)
