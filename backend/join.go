@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
 )
 
 // JoinRequest is the JSON payload sent to the /api/join HTTP endpoint.
@@ -45,7 +47,7 @@ func HandleJoin(hub *Hub, adminSecret string) http.HandlerFunc {
 			return
 		}
 
-		if req.Name == "" {
+		if strings.TrimSpace(req.Name) == "" {
 			log.Printf("[API][/api/join] Failed: Name is required")
 			http.Error(w, "Name is required", http.StatusBadRequest)
 			return
@@ -66,27 +68,47 @@ func HandleJoin(hub *Hub, adminSecret string) http.HandlerFunc {
 
 		reconnected := false
 		var token string
+		name := strings.TrimSpace(req.Name)
+		email := ""
+		if req.Role == RoleStudent {
+			// Only students are bound to their Cloudflare Access email.
+			email = AccessEmail(r)
+		}
+
+		// An email plays under one name only.
+		if owned, ok := hub.GetSessionByEmail(email); ok && NormalizeName(owned.Name) != NormalizeName(name) {
+			log.Printf("[API][/api/join] Conflict: %s already plays as %s", email, owned.Name)
+			http.Error(w, fmt.Sprintf("You're already playing as %s.", owned.Name), http.StatusConflict)
+			return
+		}
 
 		// Session Management: Check if this user is returning
-		if existingSession, exists := hub.GetSessionByName(req.Name); exists {
+		if existingSession, exists := hub.GetSessionByName(name); exists {
 			if existingSession.Role != req.Role {
-				log.Printf("[API][/api/join] Conflict: Name %s already taken by role %s", req.Name, existingSession.Role)
+				log.Printf("[API][/api/join] Conflict: Name %s already taken by role %s", name, existingSession.Role)
 				http.Error(w, "Name already taken", http.StatusConflict)
 				return
 			}
+			// A name bound to an email can only be used by that email.
+			if existingSession.Email != "" && existingSession.Email != email {
+				log.Printf("[API][/api/join] Conflict: Name %s belongs to another email", name)
+				http.Error(w, fmt.Sprintf("%s is already taken by someone else. Pick another name, e.g. %s 2.", existingSession.Name, existingSession.Name), http.StatusConflict)
+				return
+			}
 			token = existingSession.Token
+			name = existingSession.Name // keep the name as first typed
 			reconnected = true
-			log.Printf("[API][/api/join] Session Restored: %s (%s)", req.Name, req.Role)
+			log.Printf("[API][/api/join] Session Restored: %s (%s)", name, req.Role)
 		} else {
 			// Create a new secure session token
 			token = generateToken(16)
-			hub.CreateSession(token, req.Name, req.Role)
-			log.Printf("[API][/api/join] New Session: %s (%s)", req.Name, req.Role)
+			hub.CreateSession(token, name, req.Role, email)
+			log.Printf("[API][/api/join] New Session: %s (%s) %s", name, req.Role, email)
 		}
 
 		resp := JoinResponse{
 			Token:       token,
-			Name:        req.Name,
+			Name:        name,
 			Reconnected: reconnected,
 		}
 

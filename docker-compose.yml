@@ -10,7 +10,14 @@ services:
             - "8080"
         environment:
             - PORT=8080
-            # Add other env vars here (DB_URL, SECRET, etc.)
+            # Fixed admin secret (optional). Without it a random one is
+            # generated on every start: docker compose logs backend | grep SECRET
+            - ADMIN_SECRET=${ADMIN_SECRET:-}
+            # Leaderboard, sessions and player code survive restarts.
+            # Wipe with: docker compose down -v
+            - STATE_FILE=/data/arena-state.json
+        volumes:
+            - arena-data:/data
         restart: unless-stopped
         networks:
             - ca-network
@@ -20,10 +27,11 @@ services:
             context: ./frontend
             dockerfile: Dockerfile
         container_name: ca-frontend
-        # For local development we bind port 8080 on the host to nginx:80 in the container.
-        # In production you can remove this ports mapping and rely on cloudflared as the only public-facing component.
+        # Local access only (http://localhost:8088 by default). Public traffic
+        # comes in over the Docker network: cloudflared (tunnel) or, as a
+        # fallback, a Caddy container joined to the "ca-network" network.
         ports:
-            - "80:80"
+            - "127.0.0.1:${ARENA_LOCAL_PORT:-8088}:80"
         depends_on:
             - backend
         restart: unless-stopped
@@ -48,6 +56,12 @@ services:
         networks:
             - ca-network
 
+volumes:
+    arena-data:
+
 networks:
     ca-network:
+        # Fixed name so an external reverse proxy (fallback Caddy) can join it:
+        #   docker network connect ca-network <caddy-container>
+        name: ca-network
         driver: bridge

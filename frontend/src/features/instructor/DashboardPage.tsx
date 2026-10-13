@@ -97,7 +97,7 @@ export default function DashboardPage() {
     const handlePushTemplate = () => {
         if (!stagedStudentName) {
             toast.error(
-                "Select a student to push the code to (stage someone first).",
+                "Select a player to push the code to (stage someone first).",
             );
             return;
         }
@@ -237,7 +237,7 @@ export default function DashboardPage() {
 
                     {studentList.length === 0 ? (
                         <div className="text-center py-10 text-zinc-500 text-sm border border-dashed border-zinc-800 rounded-md">
-                            Waiting for students...
+                            Waiting for players...
                         </div>
                     ) : (
                         studentList.map((student) => (
@@ -364,7 +364,7 @@ export default function DashboardPage() {
 
                                 {isOutOfDate && (
                                     <span
-                                        title="Student updated — click Refresh or enable Auto-refresh"
+                                        title="Player updated — click Refresh or enable Auto-refresh"
                                         className="ml-2 inline-flex items-center gap-2 text-xs text-amber-400"
                                     >
                                         <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
@@ -378,7 +378,7 @@ export default function DashboardPage() {
                                 <button
                                     onClick={handleManualRefresh}
                                     className="p-2 rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 flex items-center justify-center"
-                                    title="Refresh staged code from student"
+                                    title="Refresh staged code from player"
                                     aria-label="Refresh staged code"
                                 >
                                     <RefreshCw
@@ -522,7 +522,7 @@ export default function DashboardPage() {
                             No code on stage
                         </h3>
                         <p className="max-w-sm text-center text-sm text-zinc-500">
-                            Select a student from the sidebar to view their code
+                            Select a player from the sidebar to view their code
                         </p>
                     </div>
                 )}

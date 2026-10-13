@@ -6,6 +6,10 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 )
 
 // generateToken creates a random hex string of the specified byte length.
@@ -26,15 +30,45 @@ func main() {
 	// Initialize the central state and routing hub
 	hub := NewHub()
 
+	// Persistence: restore the previous state and save changes periodically.
+	// STATE_FILE="" disables it (purely in-memory, as before).
+	stateFile, ok := os.LookupEnv("STATE_FILE")
+	if !ok {
+		stateFile = "/data/arena-state.json"
+	}
+	if stateFile != "" {
+		if err := hub.LoadState(stateFile); err != nil {
+			log.Fatalf("[STATE] Failed to load %s: %v (fix or delete the file)", stateFile, err)
+		}
+		go hub.RunSaver(stateFile, 5*time.Second)
+
+		// Save once more on shutdown (docker stop / restart sends SIGTERM).
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGTERM, os.Interrupt)
+		go func() {
+			<-sig
+			if err := hub.SaveState(stateFile); err != nil {
+				log.Printf("[STATE] Final save failed: %v", err)
+			} else {
+				log.Printf("[STATE] Saved to %s", stateFile)
+			}
+			os.Exit(0)
+		}()
+	}
+
 	// Start the hub's event loop in its own goroutine
 	go hub.Run()
 
 	// Generate the ephemeral secret required for Instructor access.
 	// This ensures that only someone with access to the server console
 	// can join with administrative privileges.
-	adminSecret := generateToken(3) // 6 hex characters
+	// ADMIN_SECRET fixes it across restarts; otherwise a random one is generated.
+	adminSecret := os.Getenv("ADMIN_SECRET")
+	if adminSecret == "" {
+		adminSecret = generateToken(3) // 6 hex characters
+	}
 	log.Printf("===================================================")
-	log.Printf("INSTRUCTOR SECRET: %s", adminSecret)
+	log.Printf("ADMIN SECRET: %s", adminSecret)
 	log.Printf("===================================================")
 
 	// Routes
@@ -43,6 +77,9 @@ func main() {
 	// HTTP Handshake: Validates names, manages sessions, and hands out tokens.
 	// Moved under /api/* to keep API routes separate from the SPA.
 	http.HandleFunc("/api/join", HandleJoin(hub, adminSecret))
+
+	// Cloudflare Access identity (if any) for the join page.
+	http.HandleFunc("/api/whoami", HandleWhoAmI(hub))
 
 	// WebSocket: The real-time relay for code sync and metrics.
 	// WebSocket endpoint moved under /api/ws to keep API namespace consistent.

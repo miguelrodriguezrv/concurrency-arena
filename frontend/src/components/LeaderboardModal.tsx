@@ -66,7 +66,7 @@ export default function LeaderboardModal({
                                 <th className="px-6 py-3 font-bold w-16 text-center">
                                     Rank
                                 </th>
-                                <th className="px-4 py-3 font-bold">Student</th>
+                                <th className="px-4 py-3 font-bold">Player</th>
                                 <th className="px-4 py-3 font-bold text-center">
                                     Lang
                                 </th>

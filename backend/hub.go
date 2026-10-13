@@ -31,6 +31,9 @@ type Session struct {
 	Token string
 	Name  string
 	Role  ClientRole
+	// Email of the Cloudflare Access identity that owns this name ("" when
+	// the user joined without one, e.g. through the fallback path).
+	Email string
 }
 
 // Hub maintains the set of active clients, handles routing, and stores state.
@@ -74,12 +77,29 @@ func NewHub() *Hub {
 	}
 }
 
-// GetSessionByName retrieves a session by user name
+// GetSessionByName retrieves a session by user name. Names are compared
+// case-insensitively and ignoring whitespace ("Adrian G" == "adriang").
 func (h *Hub) GetSessionByName(name string) (*Session, bool) {
+	key := NormalizeName(name)
 	h.sessionsMu.RLock()
 	defer h.sessionsMu.RUnlock()
 	for _, s := range h.sessions {
-		if s.Name == name {
+		if NormalizeName(s.Name) == key {
+			return s, true
+		}
+	}
+	return nil, false
+}
+
+// GetSessionByEmail retrieves the student session owned by an email, if any.
+func (h *Hub) GetSessionByEmail(email string) (*Session, bool) {
+	if email == "" {
+		return nil, false
+	}
+	h.sessionsMu.RLock()
+	defer h.sessionsMu.RUnlock()
+	for _, s := range h.sessions {
+		if s.Email == email && s.Role == RoleStudent {
 			return s, true
 		}
 	}
@@ -87,7 +107,7 @@ func (h *Hub) GetSessionByName(name string) (*Session, bool) {
 }
 
 // CreateSession generates a new session for a user
-func (h *Hub) CreateSession(token, name string, role ClientRole) *Session {
+func (h *Hub) CreateSession(token, name string, role ClientRole, email string) *Session {
 	h.sessionsMu.Lock()
 	defer h.sessionsMu.Unlock()
 
@@ -95,8 +115,10 @@ func (h *Hub) CreateSession(token, name string, role ClientRole) *Session {
 		Token: token,
 		Name:  name,
 		Role:  role,
+		Email: email,
 	}
 	h.sessions[token] = session
+	markDirty()
 	return session
 }
 
@@ -208,6 +230,7 @@ func (h *Hub) Run() {
 						Connected: true,
 					}
 					h.studentStates[client.ID] = state
+					markDirty()
 				} else {
 					state.Connected = true
 					log.Printf("[WS] Student reconnected: %s (Restoring State)", client.ID)
@@ -336,9 +359,11 @@ func (h *Hub) handleMessage(msg Message) {
 					state.Codes = make(map[string]json.RawMessage)
 				}
 				state.Codes[p.Language] = msg.Payload
+				markDirty()
 			}
 		case MsgTypeMetricPulse:
 			state.Metrics = msg.Payload
+			markDirty()
 		}
 		h.stateMu.Unlock()
 	}
@@ -357,6 +382,7 @@ func (h *Hub) handleMessage(msg Message) {
 			current, exists := h.leaderboard[entry.UserName]
 			if !exists || entry.UPM > current.UPM {
 				h.leaderboard[entry.UserName] = entry
+				markDirty()
 				h.leaderboardMu.Unlock()
 				// 2. Broadcast ONLY successful better scores
 				h.broadcastToAll(msg)
